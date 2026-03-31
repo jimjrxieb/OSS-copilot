@@ -105,10 +105,11 @@ Prisma's own findings. Security teams see one view.
 | Pre-engagement cleanup | No | Yes — Prisma sees clean env |
 | Compliance evidence | Yes — one dashboard for auditors | Both |
 
-**The power move:** Fix E/D rank with OSS-Copilot. Push the remaining C/B/S
-findings to Prisma Cloud. The client's Prisma dashboard shows only the hard
-problems — no noise, all signal. That's how you make a $200K/yr license
-actually earn its cost.
+**The power move:** Fix routine findings with OSS-Copilot — the secrets, the
+dependency bumps, the missing security contexts. Push the remaining complex
+and critical findings to Prisma Cloud. The client's Prisma dashboard shows
+only the hard problems — no noise, all signal. That's how you make a $200K/yr
+license actually earn its cost.
 
 ---
 

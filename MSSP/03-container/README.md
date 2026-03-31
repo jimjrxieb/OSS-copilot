@@ -133,7 +133,7 @@ Splunk integration, and service mesh deployment.
 
 | You're Here (OSS-Copilot) | Full Framework (GP-Copilot) |
 |---------------------------|----------------------------|
-| 3 scanners (Trivy, Grype, Hadolint) | 6 scanners + custom NPC wrappers |
+| 3 scanners (Trivy, Grype, Hadolint) | 6 scanners + automated wrappers |
 | Basic Falco deployment | 65 custom Falco rules + auto-response |
 | Manual Dockerfile fixes | 6 automated fixer scripts |
 | CI image scanning | Full supply chain (sign, SBOM, verify) |

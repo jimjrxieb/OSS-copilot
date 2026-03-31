@@ -109,7 +109,7 @@ license by finding what only it can find.
 
 > "Wiz is excellent at attack path analysis and cross-service risk.
 > But right now it's showing 2,800 findings and your team can't prioritize.
-> Let us clear the E and D rank findings — the secrets, the CVEs, the
+> Let us clear the routine findings — the secrets, the CVEs, the
 > missing security contexts. That's what open source covers. Then Wiz
 > shows you the 400 findings that actually need Wiz-level analysis.
 > We're not replacing Wiz. We're making it useful."

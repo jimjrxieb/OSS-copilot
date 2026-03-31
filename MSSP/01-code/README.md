@@ -162,7 +162,7 @@ framework with 16 scanners, 29 auto-fix scripts, and a rank-based triage system.
 | You're Here (OSS-Copilot) | Full Framework (GP-Copilot) |
 |---------------------------|----------------------------|
 | 5 scanners | 16 scanners |
-| Manual triage | Automated triage with rank classification |
+| Manual triage | Automated triage with severity classification |
 | Playbooks for scanning | Playbooks for scanning + fixing + deploying |
 | You fix findings yourself | Auto-fix scripts for 80% of findings |
 | Evidence as JSON files | Evidence packaged for auditors |

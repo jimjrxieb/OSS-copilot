@@ -32,7 +32,7 @@ tool sees a cleaner environment and focuses on what only it can catch.
 
 ```
 Without OSS-Copilot first:              With OSS-Copilot first:
-  Wiz scans → 2,847 findings             OSS scans → fixes E/D rank
+  Wiz scans → 2,847 findings             OSS scans → fixes routine findings
   Team overwhelmed                        Wiz scans → 400 findings
   Critical findings buried                All critical, all signal
   License feels wasted                    License earns its keep
@@ -60,7 +60,7 @@ showing ROI to leadership. This is the more powerful play.
 > "I integrate open source scanning into enterprise platforms two ways.
 > First, I forward findings via SARIF or ASFF — Prowler natively pushes
 > to AWS Security Hub, Checkov outputs Prisma-compatible SARIF. Second,
-> and more powerfully, I fix the E and D rank findings before the enterprise
+> and more powerfully, I fix the routine and deterministic findings before the enterprise
 > tool runs its own scan. Wiz and Prisma see a cleaner environment, surface
 > less noise, and focus on what only they can catch. Both approaches make
 > the enterprise tool more valuable — one feeds it data, the other reduces

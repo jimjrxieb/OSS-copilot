@@ -118,8 +118,9 @@ Security Hub calculates a security score that includes your Prowler results.
 | Proving OSS coverage to leadership | Yes — shows findings in their tool | No |
 | Pre-engagement triage | No | Yes — fix before showing the client |
 
-**The best approach is usually both:** Fix E/D rank findings first (Workflow B),
-then push remaining findings to Security Hub (Workflow A). The auditor sees
+**The best approach is usually both:** Fix routine findings first (Workflow B) —
+the secrets, CVEs, and misconfigurations that have deterministic fixes. Then
+push remaining complex findings to Security Hub (Workflow A). The auditor sees
 a clean posture with evidence of what was found and fixed.
 
 ---
