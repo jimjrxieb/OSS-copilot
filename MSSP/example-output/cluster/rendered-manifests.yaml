@@ -1,0 +1,597 @@
+---
+# Source: portfolio-app/templates/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: portfolio
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    # Pod Security Standards
+    # enforce=privileged: local-path-provisioner helper pods need hostPath.
+    # Actual pod security is enforced by Gatekeeper constraints (deny mode).
+    # warn/audit=restricted: flags non-compliant pods in logs/warnings.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# Source: portfolio-app/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: portfolio-portfolio-app
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: portfolio-app
+      app.kubernetes.io/instance: portfolio
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+    # Allow internal communication between pods
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portfolio-app
+              app.kubernetes.io/instance: portfolio
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8000
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow internal communication
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: portfolio-app
+              app.kubernetes.io/instance: portfolio
+    # Allow external HTTPS (for API calls to Claude, OpenAI, etc.)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# Source: portfolio-app/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portfolio-portfolio-app
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: false
+---
+# Source: portfolio-app/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: portfolio-portfolio-app-data
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# Source: portfolio-app/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: portfolio-portfolio-app-chroma
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: chroma
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Source: portfolio-app/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-portfolio-app-api
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/component: api
+---
+# Source: portfolio-app/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-portfolio-app-ui
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: ui
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/component: ui
+---
+# Source: portfolio-app/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: portfolio-portfolio-app-chroma
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: chroma
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/component: chroma
+---
+# Source: portfolio-app/templates/deployment-api.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-portfolio-app-api
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: portfolio-app
+      app.kubernetes.io/instance: portfolio
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: portfolio-app
+        app.kubernetes.io/instance: portfolio
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: portfolio-portfolio-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: "ghcr.io/jimjrxieb/portfolio-api:main-a4cbe744"
+          imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: API_HOST
+              value: "0.0.0.0"
+            - name: API_PORT
+              value: "8000"
+            - name: CORS_ALLOW_ORIGINS
+              value: "https://linksmlm.com"
+            - name: DATA_DIR
+              value: "/data"
+            - name: LLM_MODEL
+              value: "claude-3-haiku-20240307"
+            - name: LLM_PROVIDER
+              value: "claude"
+            - name: RAG_NAMESPACE
+              value: "portfolio"
+            - name: CHROMA_HOST
+              value: "portfolio-portfolio-app-chroma"
+            - name: CHROMA_PORT
+              value: "8000"
+          envFrom:
+            - secretRef:
+                name: portfolio-api-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 40
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: portfolio-portfolio-app-data
+        - name: tmp
+          emptyDir: {}
+---
+# Source: portfolio-app/templates/deployment-chroma.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-portfolio-app-chroma
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: chroma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: portfolio-app
+      app.kubernetes.io/instance: portfolio
+      app.kubernetes.io/component: chroma
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: portfolio-app
+        app.kubernetes.io/instance: portfolio
+        app.kubernetes.io/component: chroma
+    spec:
+      serviceAccountName: portfolio-portfolio-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 0
+        fsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: chroma
+          image: "chromadb/chroma:1.0.0"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - SETUID
+                - SETGID
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: ANONYMIZED_TELEMETRY
+              value: "False"
+          readinessProbe:
+            httpGet:
+              path: /api/v2/heartbeat
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/v2/heartbeat
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: chroma-data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: chroma-data
+          persistentVolumeClaim:
+            claimName: portfolio-portfolio-app-chroma
+---
+# Source: portfolio-app/templates/deployment-ui.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio-portfolio-app-ui
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: portfolio-app
+      app.kubernetes.io/instance: portfolio
+      app.kubernetes.io/component: ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: portfolio-app
+        app.kubernetes.io/instance: portfolio
+        app.kubernetes.io/component: ui
+    spec:
+      serviceAccountName: portfolio-portfolio-app
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ui
+          image: "ghcr.io/jimjrxieb/portfolio-ui:main-a4cbe744"
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: VITE_API_BASE_URL
+              value: "https://linksmlm.com/api"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+---
+# Source: portfolio-app/templates/httproute.yaml
+# Gateway API HTTPRoutes — App team owns routing rules
+# NIST 800-53: SC-7 (Boundary Protection)
+# Ref: GP-CONSULTING/02-CLUSTER-HARDENING/templates/gateway-api/httproute.yaml
+---
+# Source: portfolio-app/templates/ingress.yaml
+# Replaced by gateway.yaml + httproute.yaml (Gateway API v1)
+# See: GP-CONSULTING/02-CLUSTER-HARDENING/templates/gateway-api/
+---
+# Source: portfolio-app/templates/middleware.yaml
+# Replaced by HTTPRoute URLRewrite filter (ReplacePrefixMatch)
+# See: httproute.yaml — /api prefix stripping is now standard Gateway API
+---
+# Source: portfolio-app/templates/gateway.yaml
+# Gateway API — Namespace-scoped Gateway
+# NIST 800-53: SC-7 (Boundary Protection), AC-6 (Least Privilege)
+# Ref: GP-CONSULTING/02-CLUSTER-HARDENING/templates/gateway-api/gateway.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: portfolio-portfolio-app-gateway
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    control: SC-7
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8000
+      hostname: "linksmlm.com"
+      allowedRoutes:
+        namespaces:
+          from: Same    # AC-6: Only HTTPRoutes in this namespace
+---
+# Source: portfolio-app/templates/httproute.yaml
+# API backend (/api/* → strips prefix → backend)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: portfolio-portfolio-app-api
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api
+    control: SC-7
+spec:
+  parentRefs:
+    - name: portfolio-portfolio-app-gateway
+      sectionName: http
+  hostnames:
+    - "linksmlm.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: portfolio-portfolio-app-api
+          port: 8000
+---
+# Source: portfolio-app/templates/httproute.yaml
+# UI / frontend (catch-all /)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: portfolio-portfolio-app-ui
+  labels:
+    helm.sh/chart: portfolio-app-0.3.0
+    app.kubernetes.io/name: portfolio-app
+    app.kubernetes.io/instance: portfolio
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: ui
+    control: SC-7
+spec:
+  parentRefs:
+    - name: portfolio-portfolio-app-gateway
+      sectionName: http
+  hostnames:
+    - "linksmlm.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: portfolio-portfolio-app-ui
+          port: 80

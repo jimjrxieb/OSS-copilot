@@ -1,0 +1,16 @@
+{
+  "PolarisOutputVersion": "1.0",
+  "AuditTime": "2026-03-30T21:09:23-04:00",
+  "SourceType": "Path",
+  "SourceName": "/home/jimmie/linkops-industries/GP-copilot/GP-PROJECTS/02-instance/slot-3/Portfolio/infrastructure/charts/portfolio/templates/",
+  "DisplayName": "/home/jimmie/linkops-industries/GP-copilot/GP-PROJECTS/02-instance/slot-3/Portfolio/infrastructure/charts/portfolio/templates/",
+  "ClusterInfo": {
+    "Version": "unknown",
+    "Nodes": 0,
+    "Pods": 0,
+    "Namespaces": 0,
+    "Controllers": 0
+  },
+  "Results": [],
+  "Score": 100
+}
