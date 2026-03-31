@@ -1,0 +1,68 @@
+# ============================================================
+# SageMaker Pipeline Configuration
+# ============================================================
+# Update these values ONCE. All tools read from this file.
+# ============================================================
+
+project:
+  name: "my-model"
+  prefix: "ml-training"              # S3 prefix for all training data
+
+# --- AWS ---
+aws:
+  region: "us-east-1"
+  profile: "default"                 # AWS CLI profile
+  account_id: ""                     # Auto-detected if empty
+
+# --- S3 ---
+s3:
+  bucket: ""                         # Leave empty to auto-create: {prefix}-{account_id}-{region}
+  data_prefix: "training-data"       # s3://bucket/training-data/
+  output_prefix: "model-output"      # s3://bucket/model-output/
+
+# --- IAM ---
+iam:
+  role_name: "SageMakerTrainingRole"
+  # The role needs: AmazonSageMakerFullAccess + S3 access to your bucket
+  # tools/setup-sagemaker.sh creates this for you
+
+# --- Training ---
+training:
+  instance_type: "ml.g4dn.xlarge"    # Cheapest GPU (T4 16GB)
+  spot: true                         # Use spot instances (60-90% cheaper)
+  max_wait_seconds: 7200             # Max wait for spot (2 hours)
+  max_runtime_seconds: 3600          # Max training time (1 hour)
+  volume_size_gb: 50                 # EBS volume for training
+
+# --- Container ---
+container:
+  # HuggingFace Deep Learning Container — includes PyTorch + CUDA
+  # Unsloth gets pip-installed at runtime via requirements.txt
+  framework: "huggingface"
+  pytorch_version: "2.3.0"
+  python_version: "py311"
+  cuda_version: "cu121"
+
+# --- Hyperparameters ---
+# Same as local-pipeline/values.yaml — keeps training consistent
+hyperparameters:
+  model_name: "unsloth/Llama-3.2-3B-Instruct"
+  lora_r: "64"
+  lora_alpha: "128"
+  epochs: "2"
+  batch_size: "4"
+  learning_rate: "2e-5"
+  max_seq_length: "2048"
+  gradient_accumulation_steps: "8"
+
+# --- Endpoint (optional) ---
+endpoint:
+  instance_type: "ml.g4dn.xlarge"    # GPU for inference
+  instance_count: 1
+  name: ""                           # Auto-generated if empty
+
+# --- Paths ---
+# Relative to Mlops/sagemaker-pipeline/
+paths:
+  local_chunks: "../local-pipeline/03-chunked-untrained"
+  local_registry: "../model-registry"
