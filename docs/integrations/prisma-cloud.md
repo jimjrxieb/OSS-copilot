@@ -70,6 +70,27 @@ semgrep scan --config=auto --sarif --output semgrep.sarif "$TARGET"
 trivy fs --format sarif --output trivy.sarif "$TARGET"
 ```
 
+### Using Existing OSS-Copilot Output
+
+If you already ran the MSSP scans and have JSON output in `example-output/`,
+the JSON is for local review. For Prisma Cloud, re-run with SARIF format:
+
+```bash
+# Your existing output (JSON — for local review)
+MSSP/example-output/01-code/semgrep-results.json    # SAST findings
+MSSP/example-output/01-code/trivy-deps-results.json  # dependency CVEs
+MSSP/example-output/02-cluster/checkov-results.json   # IaC findings
+
+# Re-run with SARIF/Prisma format (for Prisma Cloud)
+semgrep scan --config=auto --sarif --output semgrep.sarif /path/to/project
+trivy fs --format sarif --output trivy.sarif /path/to/project
+checkov --directory /path/to/infrastructure --bc-api-key "$PRISMA_API_KEY" --repo-id "my-org/my-repo"
+```
+
+**The pattern:** Run once with JSON for your review. Run again with SARIF/native
+for the enterprise tool. Or add `--sarif` to your CI pipeline so both formats
+are generated on every scan.
+
 ---
 
 ## What It Looks Like in Prisma Cloud

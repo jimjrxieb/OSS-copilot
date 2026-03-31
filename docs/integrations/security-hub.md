@@ -75,7 +75,7 @@ aws securityhub enable-security-hub --region us-east-1
 ### Trivy → Security Hub (manual push)
 
 ```bash
-# Generate ASFF output
+# Generate ASFF output (instead of default JSON)
 trivy image --format asff --output findings.asff.json my-app:latest
 
 # Push to Security Hub
@@ -83,6 +83,27 @@ aws securityhub batch-import-findings \
     --findings file://findings.asff.json \
     --region us-east-1
 ```
+
+### Using Existing OSS-Copilot JSON Output
+
+If you already ran `scan-dependencies.sh` and have `trivy-deps-results.json`,
+you can re-run Trivy with the ASFF flag to get Security Hub format:
+
+```bash
+# Your existing output (JSON — for local review)
+MSSP/example-output/01-code/trivy-deps-results.json
+
+# Re-run with ASFF format (for Security Hub)
+trivy fs --format asff --output trivy-asff.json /path/to/your/project
+
+# Push to Security Hub
+aws securityhub batch-import-findings \
+    --findings file://trivy-asff.json \
+    --region us-east-1
+```
+
+The JSON output is for you. The ASFF output is for Security Hub. Run both
+if you need local review AND enterprise integration.
 
 ---
 

@@ -120,6 +120,6 @@ but because it can't parse the templates).
 | File | Tool | What's In It |
 |------|------|-------------|
 | `polaris-static.json` | Polaris | Best practices audit (100/100) |
-| `results_json.json` | Checkov | 256 pass / 16 fail with check details |
+| `checkov-results.json` | Checkov | 256 pass / 16 fail with check details |
 | `conftest-results.json` | Conftest | 0 failures (empty — clean) |
 | `rendered-manifests.yaml` | Helm template | 597 lines of rendered K8s YAML |

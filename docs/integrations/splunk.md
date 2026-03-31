@@ -49,40 +49,57 @@ Save the token — you'll use it in every curl call.
 ```bash
 SPLUNK_HEC="https://your-splunk:8088/services/collector/event"
 SPLUNK_TOKEN="your-hec-token"
-OUTPUT=/path/to/scan-results
+OUTPUT=/path/to/example-output
+
+# --- 01-code findings ---
 
 # Gitleaks → Splunk
 curl -k -X POST "$SPLUNK_HEC" \
     -H "Authorization: Splunk $SPLUNK_TOKEN" \
-    -d "{\"event\": $(cat $OUTPUT/gitleaks-results.json), \"sourcetype\": \"oss-copilot:gitleaks\", \"source\": \"oss-copilot\"}"
+    -d "{\"event\": $(cat $OUTPUT/01-code/gitleaks-results.json), \"sourcetype\": \"oss-copilot:gitleaks\", \"source\": \"oss-copilot\"}"
 
 # Semgrep → Splunk
 curl -k -X POST "$SPLUNK_HEC" \
     -H "Authorization: Splunk $SPLUNK_TOKEN" \
-    -d "{\"event\": $(cat $OUTPUT/semgrep-results.json), \"sourcetype\": \"oss-copilot:semgrep\", \"source\": \"oss-copilot\"}"
+    -d "{\"event\": $(cat $OUTPUT/01-code/semgrep-results.json), \"sourcetype\": \"oss-copilot:semgrep\", \"source\": \"oss-copilot\"}"
 
-# Trivy → Splunk
+# Trivy (dependencies) → Splunk
 curl -k -X POST "$SPLUNK_HEC" \
     -H "Authorization: Splunk $SPLUNK_TOKEN" \
-    -d "{\"event\": $(cat $OUTPUT/trivy-deps-results.json), \"sourcetype\": \"oss-copilot:trivy\", \"source\": \"oss-copilot\"}"
+    -d "{\"event\": $(cat $OUTPUT/01-code/trivy-deps-results.json), \"sourcetype\": \"oss-copilot:trivy\", \"source\": \"oss-copilot\"}"
 
-# Checkov → Splunk
+# Grype (dependencies) → Splunk
 curl -k -X POST "$SPLUNK_HEC" \
     -H "Authorization: Splunk $SPLUNK_TOKEN" \
-    -d "{\"event\": $(cat $OUTPUT/checkov-results.json), \"sourcetype\": \"oss-copilot:checkov\", \"source\": \"oss-copilot\"}"
+    -d "{\"event\": $(cat $OUTPUT/01-code/grype-results.json), \"sourcetype\": \"oss-copilot:grype\", \"source\": \"oss-copilot\"}"
+
+# --- 02-cluster findings ---
+
+# Checkov (K8s manifests) → Splunk
+curl -k -X POST "$SPLUNK_HEC" \
+    -H "Authorization: Splunk $SPLUNK_TOKEN" \
+    -d "{\"event\": $(cat $OUTPUT/02-cluster/checkov-results.json), \"sourcetype\": \"oss-copilot:checkov\", \"source\": \"oss-copilot\"}"
+
+# Polaris (K8s best practices) → Splunk
+curl -k -X POST "$SPLUNK_HEC" \
+    -H "Authorization: Splunk $SPLUNK_TOKEN" \
+    -d "{\"event\": $(cat $OUTPUT/02-cluster/polaris-static.json), \"sourcetype\": \"oss-copilot:polaris\", \"source\": \"oss-copilot\"}"
 ```
 
-### Batch Script (send all findings at once)
+### Batch Script (send all findings across all layers)
 
 ```bash
 #!/usr/bin/env bash
 # send-to-splunk.sh — Forward all scan results to Splunk HEC
+# Usage: ./send-to-splunk.sh /path/to/example-output
 
 SPLUNK_HEC="${SPLUNK_HEC_URL}"
 SPLUNK_TOKEN="${SPLUNK_HEC_TOKEN}"
-SCAN_DIR="${1:-.oss-copilot/code}"
+SCAN_DIR="${1:-MSSP/example-output}"
 
-for json_file in "$SCAN_DIR"/*.json; do
+# Walk every layer's JSON files
+for json_file in "$SCAN_DIR"/*//*.json "$SCAN_DIR"/*.json; do
+    [ -f "$json_file" ] || continue
     filename=$(basename "$json_file" .json)
     echo "[*] Sending $filename to Splunk..."
     curl -k -s -X POST "$SPLUNK_HEC" \
@@ -99,13 +116,14 @@ done
 ```
 Search: sourcetype="oss-copilot:*" | stats count by sourcetype
 
-sourcetype                    count
-─────────────────────────── ──────
-oss-copilot:gitleaks           7
-oss-copilot:semgrep           56
-oss-copilot:trivy             4
-oss-copilot:grype             70
-oss-copilot:checkov           16
+sourcetype                    count    layer
+─────────────────────────── ────── ────────
+oss-copilot:gitleaks           7    01-code
+oss-copilot:semgrep           56    01-code
+oss-copilot:trivy              4    01-code
+oss-copilot:grype             70    01-code
+oss-copilot:checkov           16    02-cluster
+oss-copilot:polaris            0    02-cluster
 ```
 
 ### Useful SPL Queries
