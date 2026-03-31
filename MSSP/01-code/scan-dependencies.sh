@@ -2,10 +2,21 @@
 set -euo pipefail
 
 # scan-dependencies.sh — Dependency CVE scanning with Trivy and Grype
-# Usage: ./scan-dependencies.sh /path/to/repo
+# Usage: ./scan-dependencies.sh /path/to/repo [--output /path/to/output]
 
 TARGET="${1:-.}"
-OUTPUT_DIR="${TARGET}/.oss-copilot/code"
+OUTPUT_DIR=""
+
+# Parse --output flag
+shift || true
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+OUTPUT_DIR="${OUTPUT_DIR:-${TARGET}/.oss-copilot/code}"
 mkdir -p "$OUTPUT_DIR"
 
 echo "=== OSS-Copilot: Dependency Security Scan ==="
@@ -20,6 +31,10 @@ if command -v trivy &>/dev/null; then
         --format json \
         --output "$OUTPUT_DIR/trivy-deps-results.json" \
         --severity HIGH,CRITICAL \
+        --skip-dirs .oss-copilot \
+        --skip-dirs node_modules \
+        --skip-dirs .terraform \
+        --skip-dirs vendor \
         "$TARGET" 2>/dev/null || true
 
     TRIVY_COUNT=$(python3 -c "

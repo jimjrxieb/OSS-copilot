@@ -2,10 +2,21 @@
 set -euo pipefail
 
 # scan-secrets.sh — Secret detection with Gitleaks
-# Usage: ./scan-secrets.sh /path/to/repo
+# Usage: ./scan-secrets.sh /path/to/repo [--output /path/to/output]
 
 TARGET="${1:-.}"
-OUTPUT_DIR="${TARGET}/.oss-copilot/code"
+OUTPUT_DIR=""
+
+# Parse --output flag
+shift || true
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+OUTPUT_DIR="${OUTPUT_DIR:-${TARGET}/.oss-copilot/code}"
 mkdir -p "$OUTPUT_DIR"
 
 echo "=== OSS-Copilot: Secret Detection Scan ==="
