@@ -1,0 +1,74 @@
+# ============================================================
+# Local Pipeline Configuration
+# ============================================================
+# Update these values ONCE. All tools read from this file.
+# No hardcoded paths. No magic strings.
+# ============================================================
+
+project:
+  name: "my-model"
+  version: "v1.0"
+
+# --- Model ---
+model:
+  base_model: "unsloth/Llama-3.2-3B-Instruct"   # HuggingFace model ID
+  max_seq_length: 2048                            # Max tokens per training example
+  load_in_4bit: true                              # 4-bit quantization (saves VRAM)
+
+# --- LoRA ---
+lora:
+  r: 64                                           # LoRA rank (higher = more capacity, more VRAM)
+  alpha: 128                                      # LoRA alpha (usually 2x rank)
+  dropout: 0                                      # LoRA dropout (0 for small datasets)
+  target_modules:                                  # Which layers to fine-tune
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+# --- Training ---
+training:
+  epochs_per_chunk: 2                             # Passes over each chunk
+  batch_size: 4                                   # Per-GPU batch size
+  gradient_accumulation_steps: 8                  # Effective batch = batch_size * this = 32
+  learning_rate: 2.0e-5                           # Start LR (cosine annealed)
+  warmup_ratio: 0.03                              # Warmup steps as fraction of total
+  lr_scheduler: "cosine"                          # cosine | linear | constant
+  weight_decay: 0.01
+  logging_steps: 10                               # Log every N steps
+  save_steps: 500                                 # Checkpoint every N steps
+
+# --- Chunking ---
+chunking:
+  chunk_size: 5000                                # Examples per chunk (default 5k)
+  shuffle: true                                   # Shuffle before chunking
+  holdout_pct: 5                                  # % reserved for eval (sent to testing-pipeline/)
+  holdout_seed: 42                                # Reproducible holdout split
+
+# --- Paths ---
+# Relative to Mlops/local-pipeline/
+# Update these if your directory structure differs
+paths:
+  raw_data: "01-raw-data"
+  etl_data: "02-ETL-data"
+  chunked_data: "03-chunked-untrained"
+  trained_data: "04-trained-data"
+  model_registry: "../model-registry"
+  eval_holdout: "../testing-pipeline/eval-holdout"
+
+# --- System Prompt ---
+# Baked into every training example during ETL
+system_prompt: "You are a helpful assistant."
+
+# --- GGUF Conversion ---
+gguf:
+  quantization: "Q4_K_M"                         # Q4_K_M (4GB) | Q5_K_M (5GB) | Q8_0 (8GB) | F16 (full)
+  llama_cpp_path: ""                              # Path to llama.cpp (leave empty to auto-detect)
+
+# --- Ollama ---
+ollama:
+  model_name: "my-model"                          # Name for `ollama run my-model`
+  endpoint: "http://localhost:11434"               # Ollama API endpoint

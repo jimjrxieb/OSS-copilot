@@ -1,73 +1,135 @@
 # Local Training Pipeline
 
-> 7-step fine-tuning pipeline. Raw JSONL in, GGUF model out.
-> Runs on a single GPU (24GB VRAM) or CPU with patience.
+> 3 tools. 4 stages. Data moves forward, never sits behind.
 
 ---
 
-## Data Flow
+## How It Works
 
 ```
-01-raw-data-lake/         ← DROP YOUR DATA HERE (JSONL, ChatML format)
-    ↓ etl_pipeline.py        (deduplicate, normalize, auto-label)
-02-ETL-data/              ← Cleaned, normalized JSONL
-    ↓ chunk_data.py           (split into 10k chunks + 5% eval holdout)
-03-chunked-untrained/     ← Training-ready chunks
-    ↓ train.py                (LoRA fine-tune with Unsloth, 4-bit)
-04-trained-data/          ← LoRA checkpoints per chunk
-    ↓ merge_model.py          (merge LoRA adapter into base model)
-../model-registry/        ← Full merged model (HuggingFace format)
-    ↓ convert_gguf.py         (quantize to GGUF for Ollama)
-../model-registry/        ← model.gguf ready for Ollama
-    ↓ eval_bridge.py          (benchmark across domain categories)
-../eval/results/          ← Accuracy per category + hallucination check
-    ↓ feedback_loop.py        (generate new training data for weak areas)
-01-raw-data-lake/         ← Gap data feeds back into step 1 (loop closes)
+01-raw-data/         ← DROP YOUR JSONL HERE
+    ↓ tools/etl_pipeline.py      (validate, normalize, dedup, MOVE)
+02-ETL-data/         ← Cleaned, ready to chunk
+    ↓ tools/chunk_data.py         (split into 5k chunks, MOVE)
+03-chunked-untrained/ ← Training-ready chunks
+    ↓ tools/train.py              (LoRA fine-tune, MOVE)
+04-trained-data/     ← Done. Checkpoints here.
+```
+
+**Data MOVES at every step.** After ETL runs, `01-raw-data/` is empty.
+After chunking, `02-ETL-data/` is empty. After training, the chunk moves
+to `04-trained-data/`. No duplicates. No retraining on stale data.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Configure once
+vi values.yaml                        # Set your model, paths, chunk size
+
+# 2. Drop training data
+cp my-data.jsonl 01-raw-data/
+
+# 3. Run the pipeline
+python3 tools/etl_pipeline.py         # Validate + normalize → 02-ETL-data/
+python3 tools/chunk_data.py           # Split into chunks → 03-chunked-untrained/
+python3 tools/train.py                # Fine-tune → 04-trained-data/
+
+# Preview any step without changes
+python3 tools/etl_pipeline.py --dry-run
+python3 tools/chunk_data.py --dry-run
+python3 tools/train.py --dry-run
 ```
 
 ---
 
-## Scripts (to be implemented)
+## Configuration
 
-| # | Script | Input | Output | Status |
-|---|--------|-------|--------|--------|
-| 1 | `etl_pipeline.py` | 01-raw-data-lake/*.jsonl | 02-ETL-data/combined.jsonl | Placeholder |
-| 2 | `chunk_data.py` | 02-ETL-data/*.jsonl | 03-chunked-untrained/chunk_NNN.jsonl | Placeholder |
-| 3 | `train.py` | 03-chunked-untrained/chunk_NNN.jsonl | 04-trained-data/vX.X/ | Placeholder |
-| 4 | `merge_model.py` | 04-trained-data/vX.X/lora/ | model-registry/vX.X/merged/ | Placeholder |
-| 5 | `convert_gguf.py` | model-registry/vX.X/merged/ | model-registry/vX.X/model.gguf | Placeholder |
-| 6 | `eval_bridge.py` | model-registry/vX.X/merged/ | eval/results/run_YYYYMMDD/ | Placeholder |
-| 7 | `feedback_loop.py` | eval/results/run_YYYYMMDD/ | 01-raw-data-lake/eval-gaps/ | Placeholder |
-
----
-
-## Training Config (reference)
+Everything reads from `values.yaml`. Update once, all tools use it.
 
 ```yaml
-# config.yaml
-base_model: "unsloth/Llama-3.2-3B-Instruct"  # or 8B for reasoning model
+# Key settings (see values.yaml for full reference)
+model:
+  base_model: "unsloth/Llama-3.2-3B-Instruct"
+chunking:
+  chunk_size: 5000           # Examples per chunk
+  holdout_pct: 5             # Reserved for eval
 lora:
   r: 64
   alpha: 128
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-  dropout: 0.0
 training:
-  batch_size: 4
-  gradient_accumulation: 8       # effective batch = 32
-  learning_rate: 2e-5
-  scheduler: cosine
   epochs_per_chunk: 2
-  max_seq_length: 2048
-  quantization: "4bit"
-chunk_size: 10000                # examples per chunk
-eval_holdout: 0.05               # 5% reserved for evaluation
+  batch_size: 4
+  learning_rate: 2.0e-5
 ```
 
 ---
 
-## Data Format (ChatML)
+## The Tools
 
-All training data must be in ChatML JSONL format:
+### Step 1: `tools/etl_pipeline.py`
+
+| What It Does | Details |
+|-------------|---------|
+| Reads | All `.jsonl` and `.json` from `01-raw-data/` |
+| Normalizes | ChatML, Alpaca, Q&A → all become ChatML format |
+| Validates | Messages array, content >20 chars, no `[NEEDS CORRECTION]` |
+| Deduplicates | MD5 hash of message content |
+| Labels | Auto-infers domain (kubernetes, aws, security, etc.) |
+| Writes | Combined JSONL to `02-ETL-data/` |
+| **Moves** | Source files to `01-raw-data/_processed/` |
+
+```bash
+python3 tools/etl_pipeline.py              # Run
+python3 tools/etl_pipeline.py --dry-run    # Preview
+python3 tools/etl_pipeline.py --keep       # Don't move (debug only)
+```
+
+### Step 2: `tools/chunk_data.py`
+
+| What It Does | Details |
+|-------------|---------|
+| Reads | All `.jsonl` from `02-ETL-data/` |
+| Validates | Every example re-checked |
+| Shuffles | Default on (seed=42 for reproducibility) |
+| Holdout | 5% reserved for eval → `testing-pipeline/eval-holdout/` |
+| Chunks | Splits into files of 5k examples (configurable) |
+| Manifest | Writes `manifest.json` tracking chunk lineage and status |
+| **Moves** | Source files to `02-ETL-data/_processed/` |
+
+```bash
+python3 tools/chunk_data.py                    # Default 5k chunks
+python3 tools/chunk_data.py --chunk-size 10000 # 10k chunks
+python3 tools/chunk_data.py --holdout-pct 10   # 10% holdout
+python3 tools/chunk_data.py --no-shuffle       # Preserve order
+python3 tools/chunk_data.py --dry-run          # Preview
+```
+
+### Step 3: `tools/train.py`
+
+| What It Does | Details |
+|-------------|---------|
+| Finds | Next untrained chunk from `manifest.json` |
+| Loads | Base model with 4-bit quantization (Unsloth) |
+| Applies | LoRA adapter (r=64, alpha=128, 7 target modules) |
+| Trains | Per-chunk fine-tuning (2 epochs default) |
+| Saves | Checkpoint to `04-trained-data/{version}/{chunk}/` |
+| Logs | `training_log.json` with timing, config, chunk info |
+| **Moves** | Trained chunk from `03-chunked-untrained/` to `04-trained-data/` |
+
+```bash
+python3 tools/train.py                # Train next untrained chunk
+python3 tools/train.py --chunk 3      # Train specific chunk
+python3 tools/train.py --all          # Train all untrained chunks
+python3 tools/train.py --dry-run      # Preview
+```
+
+---
+
+## Data Format
+
+All training data must be ChatML JSONL:
 
 ```json
 {"messages": [
@@ -77,32 +139,29 @@ All training data must be in ChatML JSONL format:
 ]}
 ```
 
+ETL also accepts Alpaca and Q&A formats — they get converted automatically.
+
 ---
 
-## Directory Details
+## After Training
 
-### 01-raw-data-lake/
-Drop raw JSONL files here. Multiple formats accepted by ETL:
-- ChatML (messages array) — used as-is
-- Alpaca (instruction/input/output) — converted to ChatML
-- Q&A (question/answer) — converted to ChatML
+The trained checkpoint in `04-trained-data/` needs to be:
+1. **Merged** into the base model (merge LoRA weights)
+2. **Converted** to GGUF for Ollama serving
+3. **Evaluated** against benchmarks in `testing-pipeline/`
+4. **Promoted** to `model-registry/champion/` if it passes
 
-### 02-ETL-data/
-ETL output. One combined JSONL per run. Deduplicated, normalized,
-with auto-labels (category, domain).
+These steps are documented in the respective directories.
 
-### 03-chunked-untrained/
-Training-ready chunks. Each file is exactly 10k examples (configurable).
-`manifest.json` tracks chunk lineage and status.
+---
 
-### 04-trained-data/
-LoRA checkpoints organized by model version. Each version has one
-subdirectory per trained chunk with adapter weights and training logs.
+## What Happens to Each Directory
 
-### 05-data-quality/
-Curation tools: profiling, filtering, semantic deduplication.
-Run these BEFORE training to verify data quality.
+| Directory | Before pipeline | After ETL | After chunk | After train |
+|-----------|----------------|-----------|-------------|-------------|
+| `01-raw-data/` | Your JSONL files | **Empty** (moved to `_processed/`) | Empty | Empty |
+| `02-ETL-data/` | Empty | Combined JSONL | **Empty** (moved) | Empty |
+| `03-chunked-untrained/` | Empty | Empty | Chunk files + manifest | **Empty** (moved) |
+| `04-trained-data/` | Empty | Empty | Empty | Checkpoints + logs |
 
-### 06-eval-holdout/
-5% of chunked data reserved for evaluation. Never trained on.
-Used by `eval_bridge.py` to check for overfitting.
+Nothing gets left behind. Ever.
