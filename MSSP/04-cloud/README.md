@@ -74,26 +74,25 @@ cd MSSP/04-cloud
 | **Attack Path** | Wiz ($100-400K/yr) | (nothing equivalent) | 10% — this is where Wiz earns its money |
 | **Data Classification** | Macie ($0.10/GB) | (nothing equivalent) | 5% — no OSS alternative for PII scanning |
 
-### The math:
+### The time savings:
 
 ```
-Big 4 cloud engagement stack:      $300K - $1.5M/yr in licenses
-                                   + $250-500/hr consultant time
+Without OSS-Copilot:
+  Enterprise tool scans AWS account → 2,000+ findings
+  Security team spends 3-4 weeks triaging LOW/MEDIUM noise
+  Actual critical findings get buried in the backlog
 
-OSS-Copilot + AWS native:          $0 (Prowler, Checkov, tfsec)
-                                   + ~$50-200/mo AWS native services
-                                     (GuardDuty, CloudTrail S3 storage)
-
-Coverage delta:                    ~65% of the same detection
-The 35% gap:                       Attack path graphs, effective IAM resolution,
-                                   data classification, multi-cloud correlation,
-                                   behavioral runtime analysis
+With OSS-Copilot first:
+  Prowler + Checkov clear routine findings in hours
+  Enterprise tool scans same account → 400 findings
+  Security team focuses on signal from day 1
+  Weeks of triage time eliminated
 ```
 
 The cloud gap is bigger than code (80%) or cluster (85%) because enterprise
 tools like Wiz do graph-based analysis that has no open source equivalent.
-But the 65% you get — Prowler + GuardDuty + CloudTrail + Checkov — covers
-the CIS benchmarks, IaC scanning, and threat detection that most teams need.
+But the 65% you get — Prowler + GuardDuty + CloudTrail + Checkov — clears
+the routine findings so the enterprise tool's output is immediately actionable.
 
 ---
 

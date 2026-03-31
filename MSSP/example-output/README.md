@@ -72,10 +72,8 @@ shows what matters.
 | Polaris + Checkov | Prisma Cloud IaC | $100-400K |
 | Conftest | Styra DAS | $50-150K |
 
-**Enterprise total: $240K-$900K/yr for equivalent pre-deploy coverage.**
-**OSS-Copilot: $0.**
+Running OSS-Copilot first clears the routine findings so these enterprise
+tools focus on what only they can catch — dataflow SAST, reachability
+analysis, attack path graphs, and continuous monitoring dashboards.
 
-The 20% enterprise adds: dataflow SAST, reachability analysis, attack path
-graphs, auto-fix PRs, continuous monitoring dashboards. For this project,
-that gap doesn't change the outcome — the real findings are dependency
-bumps and image digest pinning.
+The open source layer handles the load. The enterprise layer handles the signal.

@@ -79,19 +79,20 @@ cover 85% of it with open source.
 | **Attack Path Analysis** | Wiz ($100-400K/yr) | (nothing equivalent) | 10% — this is where Wiz earns its money |
 | **Drift Detection** | Wiz / Prisma ($100-400K/yr) | ArgoCD sync status + scripts | 60% — works for GitOps, not agentless |
 
-### The math:
+### The time savings:
 
 ```
-Big 4 K8s engagement tool stack:   $200K - $600K/yr in licenses
-                                   + $250-500/hr consultant time
+Without OSS-Copilot:
+  Enterprise tool scans cluster → 500+ misconfigurations
+  Team spends weeks figuring out what to fix and in what order
+  No admission control — same issues keep coming back after fixes
 
-OSS-Copilot tool stack:            $0 in licenses
-                                   + your time following these playbooks
-
-Coverage delta:                    ~85% of the same detection + enforcement
-The 15% gap:                       Attack path graphs, continuous dashboards,
-                                   multi-cluster view, session recording,
-                                   network flow visualization
+With OSS-Copilot first:
+  Open source audits and fixes routine misconfigurations in days
+  Kyverno prevents them from coming back (admission control)
+  Enterprise tool scans same cluster → 80 findings
+  Every finding is cross-domain or architectural — needs enterprise analysis
+  Months of remediation compressed to weeks
 ```
 
 ### How a real engagement works:

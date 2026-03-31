@@ -278,10 +278,9 @@ If you followed all six playbooks, you now have:
 5. RBAC scoped to least privilege (Playbook 04)
 6. Progressive enforcement with before/after proof (this playbook)
 
-That's the open source version of what Wiz ($100-400K/yr), Prisma Cloud ($100-400K/yr),
-and Styra DAS ($50K/yr) do. kube-bench does the CIS benchmarks. Kubescape does the
-NSA hardening. Polaris gives you the score. Kyverno enforces policy.
+You just cleared the routine misconfigurations and deployed admission control
+to prevent them from coming back. When Wiz or Prisma Cloud scan this cluster
+now, they find only the cross-domain risks — attack paths connecting K8s
+misconfig to cloud IAM to data exposure. That's what they're built for.
 
-The enterprise tools add attack path graphs, continuous monitoring dashboards,
-and multi-cluster views. But the core — audit, harden, enforce, prove — you've
-got it covered.
+Open source handled the load. Enterprise tools handle the signal.

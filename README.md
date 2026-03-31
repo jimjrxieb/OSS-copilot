@@ -63,7 +63,7 @@ cd 05-compliance && ./map-nist.sh
 
 ## Who This Is For
 
-**Security teams** who want coverage before (or instead of) enterprise licenses.
+**Security teams** who want to clear the noise before enterprise tools run.
 
 **MSSPs and consultants** (GuidePoint, Deloitte, PwC) who walk into client
 environments and need a triage layer before the enterprise tools add value.

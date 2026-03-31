@@ -245,9 +245,9 @@ If you followed all five playbooks, you now have:
 5. Pre-commit hooks for instant feedback (Playbook 04)
 6. A before/after comparison proving improvement (this playbook)
 
-That's the open source version of what Checkmarx, Snyk, and GitGuardian sell
-for $50K-$200K per year. You just did it for free.
+You just cleared the routine findings that would have buried the enterprise
+tool's output in noise. When Checkmarx, Snyk, or GitGuardian scan this
+codebase now, they find only the hard problems — dataflow analysis, reachability,
+cross-file injection chains. That's what they're built for.
 
-The enterprise tools have better dashboards, auto-fix PRs, and reachability
-analysis. But the core — finding vulnerabilities in your code, dependencies,
-and secrets — you've got it covered.
+Open source handled the load. Enterprise tools handle the signal.

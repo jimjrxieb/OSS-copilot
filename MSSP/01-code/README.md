@@ -83,18 +83,19 @@ is what they charge you for. The right column is what you can run yourself today
 | **CI Integration** | Snyk (built into PR workflow) | GitHub Actions + these tools | 85% — same gates, less polish |
 | **Triage & Reporting** | Custom dashboards + analysts | JSON + scripts | 50% — you do the triage manually |
 
-### The math:
+### The time savings:
 
 ```
-Big 4 engagement tool stack:     $150K - $500K/yr in licenses
-                                 + $200-400/hr consultant time
+Without OSS-Copilot:
+  Enterprise tool scans codebase → 500+ findings
+  Team spends 2-3 weeks triaging LOW/MEDIUM noise
+  Secrets and critical CVEs sit in the backlog alongside informational findings
 
-OSS-Copilot tool stack:          $0 in licenses
-                                 + your time following these playbooks
-
-Coverage delta:                  ~80% of the same findings
-The 20% gap:                     Dataflow SAST, reachability, auto-fix PRs,
-                                 historical scanning, compliance dashboards
+With OSS-Copilot first:
+  Open source clears routine findings in hours (secrets, dep bumps, SAST patterns)
+  Enterprise tool scans same codebase → 100 findings
+  Every finding needs enterprise-level analysis (dataflow, reachability)
+  Team acts on signal from day 1 — weeks of triage eliminated
 ```
 
 ### How consultants actually use this:
@@ -105,8 +106,8 @@ The 20% gap:                     Dataflow SAST, reachability, auto-fix PRs,
 4. **Policy gates** — Deploy CI scanning so nothing new gets introduced
 5. **Deliverable** — Before/after comparison proving value
 
-That's exactly what these playbooks walk you through. The Big 4 charge $50K+ for
-this engagement. You're doing it yourself with the same tools they use under the hood.
+That's exactly what these playbooks walk you through — the same methodology
+consultants follow, using the same open source tools they run under the hood.
 
 ---
 
