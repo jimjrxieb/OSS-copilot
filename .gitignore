@@ -1,0 +1,9 @@
+# Scan results (generated, not committed)
+.oss-copilot/
+
+# Evidence packages
+evidence-*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db
