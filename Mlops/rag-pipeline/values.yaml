@@ -1,0 +1,59 @@
+# ============================================================
+# RAG Pipeline Configuration
+# ============================================================
+# Update these values ONCE. All tools read from this file.
+# ============================================================
+
+project:
+  name: "my-knowledge-base"
+
+# --- Embedding ---
+embedding:
+  model: "nomic-embed-text:latest"     # Ollama model name
+  dimensions: 768                      # Must match model output
+  provider: "ollama"
+  endpoint: "http://localhost:11434"
+
+# --- Vector Store ---
+vector_store:
+  type: "chromadb"
+  persist_directory: "05-vector-store/chroma/"
+  distance_metric: "l2"               # l2 | cosine | ip
+
+# --- Chunking ---
+chunking:
+  target_tokens: 512                   # ~2048 characters per chunk
+  overlap_tokens: 64                   # 12.5% overlap between chunks
+  boundary: "sentence"                 # sentence | paragraph | fixed
+
+# --- Collections ---
+# Documents get routed to collections based on content type
+collections:
+  default: "general"
+  routes:
+    - pattern: "kubernetes|k8s|kubectl|helm|kyverno"
+      collection: "kubernetes"
+    - pattern: "aws|iam|s3|ec2|lambda|cloudtrail"
+      collection: "cloud"
+    - pattern: "rego|opa|conftest|gatekeeper|policy"
+      collection: "policies"
+    - pattern: "cve|vulnerability|exploit|cwe"
+      collection: "security"
+    - pattern: "nist|cis|soc2|hipaa|fedramp|compliance"
+      collection: "compliance"
+    - pattern: "incident|alert|response|forensic"
+      collection: "operational"
+
+# --- Paths ---
+# Relative to Mlops/rag-pipeline/
+paths:
+  unprocessed: "01-unprocessed"
+  preprocessed: "03-preprocessed"
+  vector_store: "05-vector-store"
+
+# --- Quality Gates ---
+quality:
+  min_content_length: 50               # Characters — skip tiny fragments
+  max_content_length: 50000            # Characters — skip huge files
+  dedup: true                          # SHA256 deduplication
+  redact_pii: true                     # Redact emails, API keys, passwords
