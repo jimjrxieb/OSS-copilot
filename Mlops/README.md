@@ -20,7 +20,13 @@ Just Unsloth, Ollama, ChromaDB, and your data.
 ## Architecture
 
 ```
-data-lake/                    ← Raw data generation & curation
+data-lake/                    ← Where MSSP findings become training data
+  intake/                        Scanner JSON lands here from MSSP/
+  notebooks/                     Junior data scientist explores & transforms
+  generators/                    Synthetic training data scripts
+  curated/                       Quality-reviewed, ready for pipeline
+  data-schemas/                  JSON contracts for every data format
+  example-output/                Real Portfolio scan results (the workflow proof)
     ↓
 local-pipeline/               ← 7-step fine-tuning pipeline
   01-raw-data-lake/              Drop JSONL here
