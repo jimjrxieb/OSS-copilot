@@ -22,6 +22,7 @@ Shopify use in production.
 | 03 | [Add Scanning to CI](playbooks/03-add-to-ci.md) | Make GitHub Actions scan every pull request automatically | 10 min |
 | 04 | [Pre-Commit Hooks](playbooks/04-pre-commit-hooks.md) | Catch secrets and bugs before they leave your machine | 5 min |
 | 05 | [Track Your Progress](playbooks/05-track-progress.md) | Rescan after fixes and measure improvement | 10 min |
+| 06 | [Auto-Fix with Open Source](playbooks/06-auto-fix.md) | Let tools fix deps and code patterns, review the diff | 10 min |
 
 ---
 
