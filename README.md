@@ -93,6 +93,20 @@ what open source covers, and where to buy:
 
 [`docs/enterprise-map.md`](docs/enterprise-map.md)
 
+## Enterprise Integrations
+
+Two ways to connect OSS-Copilot to enterprise tools:
+
+| Integration | Method | Guide |
+|-------------|--------|-------|
+| **AWS Security Hub** | Prowler pushes ASFF natively (one flag) | [`docs/integrations/security-hub.md`](docs/integrations/security-hub.md) |
+| **Prisma Cloud** | Checkov outputs Prisma format natively | [`docs/integrations/prisma-cloud.md`](docs/integrations/prisma-cloud.md) |
+| **Splunk** | Any scanner JSON via HTTP Event Collector | [`docs/integrations/splunk.md`](docs/integrations/splunk.md) |
+| **Wiz** | Fix first — Wiz sees clean environment | [`docs/integrations/wiz.md`](docs/integrations/wiz.md) |
+| **CrowdStrike** | Via Splunk intermediary | [`docs/integrations/crowdstrike.md`](docs/integrations/crowdstrike.md) |
+
+Full guide: [`docs/integrations/README.md`](docs/integrations/README.md)
+
 ## Prerequisites
 
 Most scripts check for tool availability and print install instructions if missing.
