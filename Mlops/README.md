@@ -41,12 +41,11 @@ model-registry/               ← Versioned model artifacts
   champion/                      Currently serving
   challenger/                    Awaiting eval promotion
     ↓
-eval/                         ← Benchmark framework
-  benchmarks/                    Domain-specific test suites
+testing-pipeline/             ← Eval, experiments, and validation
+  test-data/                     Small dataset for pipeline validation
+  benchmarks/                    Domain-specific eval suites
   results/                       Timestamped eval runs
-    ↓
-experiments/                  ← Reproducible experiment tracking
-  exp-NNN-name/                  params.yaml + metrics.json + notes.md
+  experiments/                   params.yaml + metrics.json + notes.md
     ↓
 tests/                        ← Quality gates
   test_data_quality.py           MANDATORY before training
