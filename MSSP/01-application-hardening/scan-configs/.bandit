@@ -1,0 +1,47 @@
+# Bandit Configuration
+# Python SAST security scanner
+# Docs: https://bandit.readthedocs.io/
+
+[bandit]
+# Exclude paths
+exclude_dirs = [
+    '/tests',
+    '/test',
+    '/.venv',
+    '/venv',
+    '/env',
+    '/node_modules',
+    '/migrations',
+    '/.git',
+    '/build',
+    '/dist'
+]
+
+# Include only these tests (comment out to run all)
+# tests = ['B201', 'B301']
+
+# Skip these tests (low-value or noisy checks)
+skips = [
+    'B101',  # assert_used - common in tests
+    'B601',  # paramiko_calls - if using paramiko legitimately
+]
+
+# Only report issues of a given confidence level or higher
+# Options: LOW, MEDIUM, HIGH
+# exclude_confidence = ['LOW']
+
+# Only report issues of a given severity level or higher
+# Options: LOW, MEDIUM, HIGH
+# exclude_severity = ['LOW']
+
+# Recurse into subdirectories
+recursive = true
+
+# Aggregate output by filename
+aggregate = file
+
+# Number of lines of context to show around each issue
+context_lines = 3
+
+# Plugins to load
+# plugins = []

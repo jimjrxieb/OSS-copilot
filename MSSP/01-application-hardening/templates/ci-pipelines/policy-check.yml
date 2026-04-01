@@ -1,0 +1,129 @@
+name: Policy Check (Conftest)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'manifests/**'
+      - 'k8s/**'
+      - 'terraform/**'
+      - '*.tf'
+      - 'Dockerfile'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'manifests/**'
+      - 'k8s/**'
+      - 'terraform/**'
+      - '*.tf'
+      - 'Dockerfile'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  conftest:
+    name: OPA Policy Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Conftest
+        uses: open-policy-agent/setup-conftest@v0.1.0
+        with:
+          version: '0.47.0'
+
+      - name: Validate Kubernetes manifests
+        if: hashFiles('manifests/**/*.yaml', 'k8s/**/*.yaml') != ''
+        run: |
+          conftest test manifests/ k8s/ \
+            --policy conftest-policy.rego \
+            --output json \
+            --all-namespaces \
+            > conftest-results.json
+        continue-on-error: true
+
+      - name: Validate Terraform files
+        if: hashFiles('**/*.tf') != ''
+        run: |
+          conftest test *.tf terraform/ \
+            --policy conftest-policy.rego \
+            --output json \
+            >> conftest-results.json
+        continue-on-error: true
+
+      - name: Validate Dockerfile
+        if: hashFiles('Dockerfile') != ''
+        run: |
+          conftest test Dockerfile \
+            --policy conftest-policy.rego \
+            --output json \
+            >> conftest-results.json
+        continue-on-error: true
+
+      - name: Parse results and fail on violations
+        id: parse
+        run: |
+          if [ -f conftest-results.json ]; then
+            FAILURES=$(jq '[.[] | select(.failures != null) | .failures[]] | length' conftest-results.json)
+            WARNINGS=$(jq '[.[] | select(.warnings != null) | .warnings[]] | length' conftest-results.json)
+
+            echo "failures=$FAILURES" >> $GITHUB_OUTPUT
+            echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
+
+            if [ "$FAILURES" -gt 0 ]; then
+              echo "❌ Policy violations found: $FAILURES"
+              exit 1
+            fi
+          fi
+
+      - name: Comment on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('conftest-results.json')) {
+              return;
+            }
+
+            const results = JSON.parse(fs.readFileSync('conftest-results.json', 'utf8'));
+            const failures = results.flatMap(r => r.failures || []);
+            const warnings = results.flatMap(r => r.warnings || []);
+
+            let body = '## Policy Check Results\n\n';
+
+            if (failures.length === 0 && warnings.length === 0) {
+              body += '✅ All policy checks passed!';
+            } else {
+              if (failures.length > 0) {
+                body += `### ❌ Failures (${failures.length})\n\n`;
+                failures.slice(0, 5).forEach(f => {
+                  body += `- ${f.msg}\n`;
+                });
+                if (failures.length > 5) {
+                  body += `\n_...and ${failures.length - 5} more_\n`;
+                }
+              }
+
+              if (warnings.length > 0) {
+                body += `\n### ⚠️ Warnings (${warnings.length})\n\n`;
+                warnings.slice(0, 5).forEach(w => {
+                  body += `- ${w.msg}\n`;
+                });
+                if (warnings.length > 5) {
+                  body += `\n_...and ${warnings.length - 5} more_\n`;
+                }
+              }
+            }
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

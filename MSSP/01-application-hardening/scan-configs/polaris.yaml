@@ -1,0 +1,130 @@
+# Polaris Configuration
+# Kubernetes best practices scanner
+# Docs: https://polaris.docs.fairwinds.com/
+
+# Checks configuration
+checks:
+  # Security checks
+  cpuRequestsMissing: warning
+  cpuLimitsMissing: warning
+  memoryRequestsMissing: warning
+  memoryLimitsMissing: warning
+  readinessProbeMissing: warning
+  livenessProbeMissing: warning
+  pullPolicyNotAlways: ignore
+  tagNotSpecified: danger
+  hostIPCSet: danger
+  hostPIDSet: danger
+  hostNetworkSet: warning
+  hostPortSet: warning
+  runAsRootAllowed: warning
+  runAsPrivileged: danger
+  notReadOnlyRootFilesystem: warning
+  privilegeEscalationAllowed: danger
+  dangerousCapabilities: danger
+  insecureCapabilities: warning
+  priorityClassNotSet: ignore
+  tlsSettingsMissing: warning
+  deploymentMissingReplicas: warning
+  missingPodDisruptionBudget: ignore
+  metadataAndNameMismatched: ignore
+
+  # Custom checks
+  sensitiveContainerEnvVar: warning
+  sensitiveConfigmapContent: warning
+  clusterrolePodExecAttach: warning
+  rolePodExecAttach: warning
+
+# Exemptions configuration
+exemptions:
+  - controllerNames:
+      - kube-apiserver
+      - kube-proxy
+      - kube-scheduler
+      - etcd-manager-events
+      - kube-controller-manager
+      - kube-dns
+      - etcd-manager-main
+    rules:
+      - hostPortSet
+      - hostNetworkSet
+      - readinessProbeMissing
+      - livenessProbeMissing
+      - cpuRequestsMissing
+      - cpuLimitsMissing
+      - memoryRequestsMissing
+      - memoryLimitsMissing
+      - runAsRootAllowed
+      - runAsPrivileged
+      - notReadOnlyRootFilesystem
+      - hostPIDSet
+
+  - controllerNames:
+      - kube-flannel-ds
+    rules:
+      - notReadOnlyRootFilesystem
+      - runAsRootAllowed
+      - notReadOnlyRootFilesystem
+      - readinessProbeMissing
+      - livenessProbeMissing
+      - cpuLimitsMissing
+
+  - controllerNames:
+      - cert-manager
+    rules:
+      - notReadOnlyRootFilesystem
+      - runAsRootAllowed
+      - readinessProbeMissing
+      - livenessProbeMissing
+
+  - controllerNames:
+      - cluster-autoscaler
+    rules:
+      - notReadOnlyRootFilesystem
+      - runAsRootAllowed
+      - readinessProbeMissing
+
+  - controllerNames:
+      - vpa
+    rules:
+      - runAsRootAllowed
+      - readinessProbeMissing
+      - livenessProbeMissing
+      - notReadOnlyRootFilesystem
+
+  - controllerNames:
+      - datadog
+    rules:
+      - runAsRootAllowed
+      - readinessProbeMissing
+      - livenessProbeMissing
+      - notReadOnlyRootFilesystem
+
+  - controllerNames:
+      - nginx-ingress-controller
+    rules:
+      - privilegeEscalationAllowed
+      - insecureCapabilities
+      - runAsRootAllowed
+
+  - controllerNames:
+      - dns-controller
+    rules:
+      - hostNetworkSet
+      - readinessProbeMissing
+      - livenessProbeMissing
+
+  - controllerNames:
+      - kube-state-metrics
+    rules:
+      - runAsRootAllowed
+      - readinessProbeMissing
+
+# Mutations configuration (auto-fix suggestions)
+mutations: []
+
+# Display configuration
+displayName: "Polaris"
+
+# Custom check definitions
+customChecks: {}

@@ -1,0 +1,32 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-semver-tags
+  annotations:
+    policies.kyverno.io/title: Require Semantic Versioning Tags
+    policies.kyverno.io/description: >-
+      Image tags must follow semantic versioning (vX.Y.Z or X.Y.Z).
+      Examples: v1.0.0, 2.1.3, 1.0.0-rc1
+    gp-copilot/category: "custom"
+    gp-copilot/standard: "GP-Copilot"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Audit  # Less strict, just warns
+  background: true
+  rules:
+    - name: semver-tags-only
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      validate:
+        message: >-
+          Image tags should follow semantic versioning (e.g., v1.2.3).
+          Untagged images or non-semver tags may indicate dev/test images.
+        foreach:
+          - list: "request.object.spec.template.spec.containers"
+            pattern:
+              image: "*:v?[0-9].[0-9].[0-9]*"

@@ -1,0 +1,198 @@
+# toolbox-pod.yaml — Deploy cluster-toolkit as a long-running pod.
+# Operator execs in, runs scans, results persist to PVC.
+#
+# Usage:
+#   kubectl apply -f tools/toolbox-pod.yaml
+#   kubectl exec -it cluster-toolkit -n gp-security -- bash
+#   kubectl exec -it cluster-toolkit -n gp-security -- run-cluster-audit.sh
+#   kubectl exec -it cluster-toolkit -n gp-security -- fix-cluster-security.sh --dry-run
+#
+# Copy reports off cluster:
+#   kubectl cp gp-security/cluster-toolkit:/opt/cluster-toolkit/reports/ ./reports/
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gp-security
+  labels:
+    app.kubernetes.io/part-of: gp-copilot
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-toolkit
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: cluster-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-toolkit
+  labels:
+    app.kubernetes.io/name: cluster-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+rules:
+  # Read — auditing (kubescape, polaris, RBAC audit, resource checks)
+  - apiGroups: [""]
+    resources: ["pods", "services", "events", "namespaces", "configmaps", "secrets", "serviceaccounts", "limitranges", "resourcequotas", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["podsecuritypolicies", "poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  # Write — fix-cluster-security.sh, deploy-policies.sh
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "limitranges", "resourcequotas"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["patch", "update"]
+  # Secrets for Helm releases
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update", "patch", "delete"]
+  # Kyverno policies
+  - apiGroups: ["kyverno.io"]
+    resources: ["clusterpolicies", "policies", "policyexceptions"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Gatekeeper constraints
+  - apiGroups: ["constraints.gatekeeper.sh"]
+    resources: ["*"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["templates.gatekeeper.sh"]
+    resources: ["constrainttemplates"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Jobs — kube-bench runs as a Job
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Pod logs — kube-bench job output
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-toolkit
+  labels:
+    app.kubernetes.io/name: cluster-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-toolkit
+subjects:
+  - kind: ServiceAccount
+    name: cluster-toolkit
+    namespace: gp-security
+---
+# Ensure the toolkit pod can always reach the K8s API server,
+# even after fix-cluster-security.sh applies default-deny policies.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cluster-toolkit-egress
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: cluster-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cluster-toolkit
+  policyTypes:
+    - Egress
+  egress:
+    # K8s API server
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    # DNS resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cluster-toolkit-reports
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: cluster-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cluster-toolkit
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: cluster-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+spec:
+  serviceAccountName: cluster-toolkit
+  imagePullSecrets:
+    - name: ecr-pull
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: toolkit
+      image: 026090554981.dkr.ecr.us-east-1.amazonaws.com/gp-copilot/cluster-toolkit:latest
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: false
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+      volumeMounts:
+        - name: reports
+          mountPath: /opt/cluster-toolkit/reports
+  volumes:
+    - name: reports
+      persistentVolumeClaim:
+        claimName: cluster-toolkit-reports

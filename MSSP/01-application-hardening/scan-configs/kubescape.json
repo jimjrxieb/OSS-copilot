@@ -1,0 +1,73 @@
+{
+  "comment": "Kubescape Configuration - NSA/CISA Kubernetes Security Scanner",
+  "version": "1.0",
+
+  "frameworks": [
+    "nsa",
+    "cisa",
+    "mitre",
+    "cis-eks-t1.2.0",
+    "cis-aks-t1.2.0",
+    "cis-gke-t1.2.0"
+  ],
+
+  "scanSettings": {
+    "verbose": false,
+    "format": "json",
+    "output": "kubescape-results.json",
+    "exceptions": true,
+    "controlsInputs": true,
+    "hostSensor": false,
+    "local": false
+  },
+
+  "severity": {
+    "threshold": "medium",
+    "include": ["critical", "high", "medium"]
+  },
+
+  "exceptions": {
+    "comment": "Resources to exclude from scanning",
+    "namespaces": [
+      "kube-system",
+      "kube-public",
+      "kube-node-lease"
+    ],
+    "resources": [
+      {
+        "kind": "Deployment",
+        "namespace": "monitoring",
+        "name": "prometheus-*"
+      }
+    ]
+  },
+
+  "controlExceptions": {
+    "comment": "Specific controls to skip",
+    "controls": []
+  },
+
+  "accountConfig": {
+    "comment": "Kubescape Cloud integration (optional)",
+    "account": "",
+    "accessKey": ""
+  },
+
+  "clusterContext": {
+    "comment": "Cluster-specific configuration",
+    "clusterName": "",
+    "clusterType": "kubernetes",
+    "cloudProvider": ""
+  },
+
+  "compliance": {
+    "comment": "Compliance reporting options",
+    "includePassedControls": false,
+    "failThreshold": 0
+  },
+
+  "customFrameworks": {
+    "comment": "Path to custom framework definitions",
+    "path": ""
+  }
+}

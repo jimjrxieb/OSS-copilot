@@ -1,0 +1,173 @@
+# .gitleaks.toml
+# Ghost Protocol — Pre-Deployment Package
+# Docs: https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+title = "Ghost Protocol Gitleaks Config"
+
+[extend]
+# Use gitleaks' built-in rule database (covers AWS, GCP, Azure, GitHub, Slack, etc.)
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Global allowlist — things that are never real secrets
+# ---------------------------------------------------------------------------
+[allowlist]
+description = "Exclude test data, build artifacts, docs, and placeholder values"
+
+# Paths to skip entirely (regex matched against file path)
+paths = [
+  # Version control internals
+  '''\.git/''',
+
+  # Test directories — test fixtures often contain example credentials
+  '''tests?/''',
+  '''test_.*\.py$''',
+  '''.*_test\.go$''',
+  '''.*\.test\.(js|ts)$''',
+  '''.*\.spec\.(js|ts)$''',
+  '''__tests__/''',
+  '''fixtures?/''',
+  '''testdata/''',
+  '''mocks?/''',
+
+  # Dependencies — never scan installed packages
+  '''node_modules/''',
+  '''vendor/''',
+  '''\.venv/''',
+  '''venv/''',
+  '''\.env\.example$''',
+  '''env\.example$''',
+
+  # Build artifacts — compiled/generated output is noise
+  '''dist/''',
+  '''build/''',
+  '''out/''',
+  '''target/''',
+  '''\.next/''',
+  '''__pycache__/''',
+  '''\.mypy_cache/''',
+  '''\.pytest_cache/''',
+  '''.*\.pyc$''',
+
+  # Lock files — contain hashes that trigger entropy rules
+  '''package-lock\.json$''',
+  '''yarn\.lock$''',
+  '''Pipfile\.lock$''',
+  '''poetry\.lock$''',
+  '''go\.sum$''',
+  '''Gemfile\.lock$''',
+  '''composer\.lock$''',
+
+  # Minified / generated JS — very high entropy, never real secrets
+  '''.*\.min\.js$''',
+  '''.*\.min\.css$''',
+  '''.*\.map$''',
+
+  # Documentation — example snippets are expected to look like secrets
+  '''docs?/''',
+  '''examples?/''',
+  '''README''',
+  '''CHANGELOG''',
+  '''.*\.md$''',
+  '''.*\.rst$''',
+
+  # Scanner outputs — contain secrets FROM scans, not real secrets
+  '''scanner_outputs/''',
+  '''scan[-_]?results?/''',
+  '''.*\.jsonl$''',
+
+  # Logs — contain scan findings, not real secrets
+  '''logs?/''',
+  '''target-slot-logs/''',
+
+  # Archives — old/deprecated code, not active
+  '''_archive/''',
+  '''archive/''',
+
+  # Model data / training / RAG — not application code
+  '''GP-MODEL-OPS/''',
+  '''GP-PROJECTS/''',
+  '''GP-S3/''',
+  '''GP-CLOUDWATCH/''',
+  '''chroma/''',
+  '''ragged-data/''',
+  '''llama\.cpp/''',
+  '''.*\.gguf$''',
+  '''.*\.pkl$''',
+  '''.*\.bin$''',
+
+  # This config file itself
+  '''\.gitleaks\.toml$''',
+  '''gitleaks\.toml$''',
+]
+
+# Secret patterns that are never real (placeholder syntax, example keys)
+regexes = [
+  # AWS documentation example keys
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+  '''(AKIA|ASIA)0{16}''',
+
+  # Stripe test keys (pk_test_, sk_test_ are safe to commit for test envs)
+  '''(sk_test_|pk_test_)[a-zA-Z0-9]{10,}''',
+
+  # Placeholder variable syntax in config templates
+  '''(YOUR|CHANGE|REPLACE|EXAMPLE|PLACEHOLDER)[_-]?(API[_-]?KEY|KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)''',
+  '''<(YOUR|MY|THE)[_-]?[A-Z_]+>''',    # <YOUR_API_KEY>
+  '''\{\{[ ]*[A-Z_]+[ ]*\}\}''',         # {{ API_KEY }}
+  '''\$\{[A-Z_]+\}''',                    # ${API_KEY}
+  '''%[A-Z_]+%''',                        # %API_KEY%
+
+  # Obvious test/demo data
+  '''(test|demo|sample|example|fake|mock|dummy)[_-]?(secret|key|token|password|credential)''',
+  '''password(123|1234|12345|123456)''',
+]
+
+# Stop words — if the secret value contains these, skip it
+stopwords = [
+  "example",
+  "test",
+  "demo",
+  "sample",
+  "placeholder",
+  "changeme",
+  "change_me",
+  "your_",
+  "replace",
+  "todo",
+  "fixme",
+  "insert",
+  "put_your",
+]
+
+# ---------------------------------------------------------------------------
+# Custom rules for patterns the default ruleset misses
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "database-connection-string"
+description = "Database connection string with embedded credentials"
+regex = '''(?i)(postgresql|mysql|mariadb|mongodb|redis|mssql):\/\/[^:\s]{1,64}:[^@\s]{1,128}@[^\s/]+'''
+keywords = ["postgresql://", "mysql://", "mongodb://", "redis://"]
+[rules.allowlist]
+  regexes = ['''(localhost|127\.0\.0\.1|example\.com|your[-_]host)''']
+
+[[rules]]
+id = "slack-webhook"
+description = "Slack Incoming Webhook URL"
+regex = '''https://hooks\.slack\.com/services/T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[A-Za-z0-9]{20,}'''
+keywords = ["hooks.slack.com"]
+
+[[rules]]
+id = "jwt-secret"
+description = "Hardcoded JWT signing secret (short string assigned to jwt_secret variable)"
+regex = '''(?i)(jwt[_-]?(secret|key|signing[_-]?key))\s*[=:]\s*['"]([^'"]{16,})['"]'''
+keywords = ["jwt_secret", "jwt_key", "jwt-secret"]
+[rules.allowlist]
+  regexes = ['''(os\.environ|process\.env|getenv|config\[)''']
+
+[[rules]]
+id = "private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN[ A-Z]*(RSA |EC |DSA |OPENSSH )?PRIVATE KEY( BLOCK)?-----'''
+keywords = ["BEGIN PRIVATE KEY", "BEGIN RSA PRIVATE KEY", "BEGIN EC PRIVATE KEY"]

@@ -1,0 +1,38 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-runtime-class-untrusted
+  annotations:
+    policies.kyverno.io/title: Require RuntimeClass for Untrusted Workloads
+    policies.kyverno.io/category: Runtime Security
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Untrusted workloads should use container sandboxing (gVisor or Kata).
+      This policy requires pods in 'untrusted' namespaces to have a RuntimeClass.
+      CKS Exam Domain: Monitoring, Logging and Runtime Security (20%)
+      NSA/CISA: 2.4
+    gp-copilot/category: "restricted"
+    gp-copilot/standard: "GP-Copilot"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-sandbox-runtime
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchLabels:
+                  security.kubernetes.io/trust-level: "untrusted"
+      validate:
+        message: >-
+          Pods in untrusted namespaces must specify a RuntimeClass for sandbox isolation.
+          Add: spec.runtimeClassName: gvisor (or kata)
+        pattern:
+          spec:
+            runtimeClassName: "gvisor | kata | kata-qemu | kata-fc"

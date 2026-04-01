@@ -1,0 +1,322 @@
+# jsa-infrasec Helm Values - Google GKE Production
+# Comprehensive runtime security for GKE clusters
+#
+# Prerequisites:
+#   - GKE cluster with Workload Identity enabled
+#   - GCP service account with roles:
+#     - storage.objectCreator (for snapshots)
+#     - logging.logWriter (for Cloud Logging)
+#     - compute.viewer (for resource monitoring)
+#     - iam.securityReviewer (for IAM watcher)
+#   - GCS bucket for snapshots
+#
+# Usage:
+#   cp deployment-configs/gcp-gke.yaml my-values.yaml
+#   # Edit CHANGE ME values
+#   helm install jsa-infrasec gp-copilot/jsa-infrasec -n gp-security -f my-values.yaml
+
+# Global settings
+nameOverride: "jsa-infrasec"
+fullnameOverride: "jsa-infrasec"
+
+# Image configuration
+image:
+  repository: gp-copilot/jsa-infrasec
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Replica count
+replicaCount: 2
+
+# Resource limits
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# JADE integration
+jade:
+  enabled: true
+  url: "http://jade.gp-security:5000"
+  rankCeiling: "C"  # JADE's maximum authority (hardcoded, never raise)
+  timeout: 300
+  retries: 3
+
+# Watchers configuration
+watchers:
+  # Falco syscall monitoring
+  falco:
+    enabled: true
+    endpoint: "http://falco.falco:5000"
+    rules:
+      - mitre-attack
+      - k8s-audit
+      - container-activity
+    mitre:
+      enabled: true
+      enrichment: true
+
+  # Kubernetes watchers
+  kubernetes:
+    events:
+      enabled: true
+      types: ["Warning", "Error"]
+    audit:
+      enabled: true
+      logPath: "/var/log/kubernetes/audit.log"
+    drift:
+      enabled: true
+      interval: 60
+    admission:
+      enabled: true
+      deniedOnly: true
+    logs:
+      enabled: true
+      anomalyDetection: true
+
+  # Policy watchers
+  policy:
+    gatekeeper:
+      enabled: true
+      prometheus: true
+    kyverno:
+      enabled: true
+      policyReports: true
+    conftest:
+      enabled: false
+
+  # IaC watchers
+  iac:
+    terraform:
+      enabled: false
+    helm:
+      enabled: true
+      releases: ["all"]
+
+  # GCP Cloud watchers
+  cloud:
+    aws:
+      enabled: false
+    azure:
+      enabled: false
+    gcp:
+      enabled: true
+      projectId: "my-gcp-project"  # CHANGE ME
+      region: "us-central1"  # CHANGE ME
+      watchers:
+        iam:
+          enabled: true
+          events: ["SetIamPolicy", "CreateServiceAccount", "CreateServiceAccountKey"]
+        gcs:
+          enabled: true
+          buckets: ["all"]
+        firewall:
+          enabled: true
+          events: ["InsertFirewall", "UpdateFirewall", "DeleteFirewall"]
+        vpc:
+          enabled: true
+          events: ["InsertRoute", "DeleteRoute", "InsertSubnetwork"]
+
+  # Secrets watchers
+  secrets:
+    kubernetes:
+      enabled: true
+      namespaces: ["all"]
+    vault:
+      enabled: false
+    gcpSecretManager:
+      enabled: true
+      projectId: "my-gcp-project"  # CHANGE ME
+
+# Responders configuration
+responders:
+  # Auto-fix settings
+  autoFix:
+    enabled: true
+    dryRun: false
+    maxRank: "D"
+    excludeNamespaces:
+      - kube-system
+      - kube-public
+      - gp-security
+
+  # Snapshot/rollback
+  snapshot:
+    enabled: true
+    storage: "gs://my-company-jsa-snapshots/"  # CHANGE ME
+    encryption: true
+    retention:
+      days: 30
+      maxCount: 1000
+
+  # JADE approval workflow
+  jadeApproval:
+    required: true
+    timeout: 300
+    fallback: "escalate"
+
+  # Kubernetes responders
+  kubernetes:
+    podPatcher:
+      enabled: true
+      rank: "D"
+    deploymentUpdater:
+      enabled: true
+      rank: "D"
+    podIsolator:
+      enabled: true
+      rank: "C"
+    podKiller:
+      enabled: true
+      rank: "C"
+    namespaceIsolator:
+      enabled: true
+      rank: "B"
+
+  # Policy responders
+  policy:
+    networkPolicyGenerator:
+      enabled: true
+      rank: "D"
+    rbacScoper:
+      enabled: true
+      rank: "C"
+
+  # Cloud responders (GCP)
+  cloud:
+    gcp:
+      iamFixer:
+        enabled: true
+        rank: "C"
+      gcsBucketFixer:
+        enabled: true
+        rank: "D"
+      firewallFixer:
+        enabled: true
+        rank: "D"
+
+  # Secrets responders
+  secrets:
+    rotator:
+      enabled: true
+      rank: "D"
+
+  # Forensics
+  forensics:
+    logCapturer:
+      enabled: true
+      rank: "E"
+    snapshotCreator:
+      enabled: true
+      rank: "E"
+    evidencePreserver:
+      enabled: true
+      rank: "D"
+      storage: "gs://my-company-jsa-forensics/"  # CHANGE ME
+
+# Metrics and monitoring
+metrics:
+  prometheus:
+    enabled: true
+    port: 9100
+    path: /metrics
+    interval: 30s
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+
+# Alerts
+alerts:
+  slack:
+    enabled: true
+    webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"  # CHANGE ME
+    channels:
+      critical: "#security-critical"
+      high: "#security-alerts"
+      medium: "#security-log"
+      info: "#security-verbose"
+    mentions:
+      critical: "@security-oncall"
+      high: "@security-team"
+  pagerduty:
+    enabled: false
+    integrationKey: ""
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+  cloudLogging:
+    enabled: true
+    projectId: "my-gcp-project"  # CHANGE ME
+    logName: "jsa-infrasec"
+
+# Service account
+serviceAccount:
+  create: true
+  annotations:
+    iam.gke.io/gcp-service-account: "jsa-infrasec@my-gcp-project.iam.gserviceaccount.com"  # CHANGE ME
+  name: "jsa-infrasec"
+
+# RBAC
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "events", "secrets", "configmaps"]
+      verbs: ["get", "list", "watch", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets"]
+      verbs: ["get", "list", "watch", "patch", "update"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["networkpolicies"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["roles", "rolebindings"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+
+# Pod security
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: "standard-rwo"  # GKE standard SSD
+  size: 10Gi
+
+# Network policy
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      ports:
+      - protocol: TCP
+        port: 9100
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443  # HTTPS (GCP APIs, Slack, etc.)
+      - protocol: TCP
+        port: 5000  # JADE, Falco

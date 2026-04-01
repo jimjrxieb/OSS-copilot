@@ -1,0 +1,90 @@
+# JavaScript / TypeScript Pre-Commit Configuration
+# Security + code quality for JS/TS projects
+# Docs: https://pre-commit.com/
+
+default_stages: [commit]
+
+fail_fast: false
+
+repos:
+  # ===== SECRET DETECTION (always first) =====
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+        name: Gitleaks (Secrets)
+        args: ['--config=.gitleaks.toml']
+        always_run: true
+
+  # ===== SAST =====
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.45.0
+    hooks:
+      - id: semgrep
+        name: Semgrep (SAST)
+        args:
+          - '--config=p/javascript'
+          - '--config=p/typescript'
+          - '--config=p/jwt'
+          - '--config=p/owasp-top-ten'
+          - '--error'
+          - '--timeout=30'
+        files: \.(js|jsx|ts|tsx|mjs|cjs)$
+
+  # ===== LINTING + FORMATTING =====
+  # ESLint and Prettier run via local hooks because they need
+  # the project's node_modules and config files
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint (Linter)
+        entry: npx eslint --fix
+        language: system
+        files: \.(js|jsx|ts|tsx|mjs|cjs)$
+        exclude: ^(dist/|build/|node_modules/)
+
+      - id: prettier
+        name: Prettier (Formatter)
+        entry: npx prettier --write --ignore-unknown
+        language: system
+        files: \.(js|jsx|ts|tsx|json|css|scss|md|yaml|yml)$
+        exclude: ^(dist/|build/|node_modules/|package-lock\.json)
+
+  # ===== DEPENDENCY AUDIT =====
+  - repo: local
+    hooks:
+      - id: npm-audit
+        name: npm audit (CVEs)
+        entry: npm audit --audit-level=high
+        language: system
+        files: package\.json$
+        pass_filenames: false
+
+  # ===== BASIC VALIDATION =====
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+        name: Check YAML
+      - id: check-json
+        name: Check JSON
+      - id: check-added-large-files
+        name: Check large files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+        name: Detect private keys
+      - id: end-of-file-fixer
+        name: Fix EOF
+        exclude: ^(dist/|build/)
+      - id: trailing-whitespace
+        name: Trim whitespace
+        exclude: ^(dist/|build/|\.min\.)
+
+  # ===== DOCKERFILE (if present) =====
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        name: Hadolint (Dockerfile)
+        args: ['--config=.hadolint.yaml']
+        files: Dockerfile

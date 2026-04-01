@@ -1,0 +1,143 @@
+# Falco Rules — Service Mesh Security
+#
+# Detects tampering with mesh infrastructure, mTLS bypass attempts,
+# and unauthorized sidecar/proxy manipulation.
+#
+# MITRE ATT&CK Coverage:
+#   T1557 — Adversary-in-the-Middle (mTLS bypass)
+#   T1036 — Masquerading (fake sidecar injection)
+#   T1562 — Impair Defenses (disabling mesh encryption)
+#   T1190 — Exploit Public-Facing Application (proxy exploitation)
+
+- rule: Envoy proxy config tampering
+  desc: >
+    Detect writes to Envoy proxy configuration files inside mesh sidecar
+    or ztunnel containers. Attackers may modify proxy config to intercept
+    or redirect traffic.
+  condition: >
+    container and
+    (container.image.repository contains "istio" or
+     container.image.repository contains "envoy" or
+     container.image.repository contains "ztunnel") and
+    open_write and
+    (fd.name startswith "/etc/istio/" or
+     fd.name startswith "/etc/envoy/" or
+     fd.name startswith "/var/run/secrets/istio/")
+  output: >
+    Envoy/Istio config modified in mesh container
+    (user=%user.name command=%proc.cmdline file=%fd.name
+     container=%container.name image=%container.image.repository
+     pod=%k8s.pod.name namespace=%k8s.ns.name)
+  priority: CRITICAL
+  tags: [network, mitre_adversary_in_the_middle, T1557, service_mesh, CKS]
+
+- rule: mTLS certificate file access by non-proxy process
+  desc: >
+    Detect non-proxy processes reading Istio mTLS certificates.
+    Only envoy/ztunnel/pilot-agent should access these files.
+    An attacker reading certs could impersonate services.
+  condition: >
+    container and
+    open_read and
+    (fd.name startswith "/var/run/secrets/istio/" or
+     fd.name startswith "/etc/certs/" or
+     fd.name startswith "/var/run/secrets/tokens/istio-token") and
+    not (proc.name in (envoy, pilot-agent, ztunnel))
+  output: >
+    Non-proxy process accessed mTLS certificates
+    (user=%user.name command=%proc.cmdline file=%fd.name
+     process=%proc.name container=%container.name
+     pod=%k8s.pod.name namespace=%k8s.ns.name)
+  priority: CRITICAL
+  tags: [network, mitre_credential_access, T1557, service_mesh, CKS]
+
+- rule: Unauthorized sidecar injection
+  desc: >
+    Detect container creation in mesh-enrolled namespaces with proxy-like
+    names that aren't the official Istio/Cilium sidecar. Attackers may
+    inject rogue proxies to intercept traffic.
+  condition: >
+    container and
+    container.name contains "proxy" and
+    not (container.image.repository contains "istio" or
+         container.image.repository contains "envoy" or
+         container.image.repository contains "cilium") and
+    evt.type = container
+  output: >
+    Unauthorized proxy container detected
+    (container=%container.name image=%container.image.repository
+     pod=%k8s.pod.name namespace=%k8s.ns.name)
+  priority: WARNING
+  tags: [network, mitre_masquerading, T1036, service_mesh, CKS]
+
+- rule: Service mesh control plane process execution
+  desc: >
+    Detect shell or unexpected process execution inside Istio control
+    plane pods (istiod, ztunnel). These pods should only run their
+    main binary — any shell activity is suspicious.
+  condition: >
+    container and
+    spawned_process and
+    (k8s.ns.name = "istio-system") and
+    (proc.name in (bash, sh, dash, zsh, curl, wget, nc, ncat, python, python3, perl, ruby)) and
+    not (proc.pname in (pilot-discovery, ztunnel))
+  output: >
+    Shell spawned in Istio control plane pod
+    (user=%user.name command=%proc.cmdline parent=%proc.pname
+     container=%container.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [process, mitre_execution, T1059, service_mesh, CKS]
+
+- rule: PeerAuthentication changed to PERMISSIVE
+  desc: >
+    Detect when a PeerAuthentication resource is modified to weaken
+    mTLS from STRICT to PERMISSIVE. This could allow plaintext
+    traffic interception.
+  condition: >
+    kevt and
+    kcreate and
+    ka.target.resource = "peerauthentications" and
+    ka.req.body contains "PERMISSIVE"
+  output: >
+    PeerAuthentication weakened to PERMISSIVE
+    (user=%ka.user.name resource=%ka.target.name
+     namespace=%ka.target.namespace)
+  priority: WARNING
+  tags: [k8s, mitre_impair_defenses, T1562, service_mesh, CKS]
+  source: k8s_audit
+
+- rule: AuthorizationPolicy deleted
+  desc: >
+    Detect deletion of AuthorizationPolicy resources. Removing
+    authorization policies opens up service-to-service access
+    that was previously restricted.
+  condition: >
+    kevt and
+    kdelete and
+    ka.target.resource = "authorizationpolicies"
+  output: >
+    AuthorizationPolicy deleted
+    (user=%ka.user.name policy=%ka.target.name
+     namespace=%ka.target.namespace)
+  priority: WARNING
+  tags: [k8s, mitre_impair_defenses, T1562, service_mesh, CKS]
+  source: k8s_audit
+
+- rule: Mesh egress to unauthorized external host
+  desc: >
+    Detect outbound connections from mesh-enrolled pods to external
+    IPs not in the service registry. In REGISTRY_ONLY mode, this
+    indicates a misconfiguration or bypass attempt.
+  condition: >
+    container and
+    outbound and
+    fd.sip.name = "" and
+    not (fd.rip in (rfc_1918_addresses)) and
+    not (k8s.ns.name in (kube-system, istio-system, monitoring))
+  output: >
+    Mesh pod connecting to unregistered external host
+    (command=%proc.cmdline destination=%fd.rip:%fd.rport
+     container=%container.name pod=%k8s.pod.name
+     namespace=%k8s.ns.name)
+  priority: NOTICE
+  tags: [network, mitre_exfiltration, T1041, service_mesh, CKS]

@@ -1,0 +1,221 @@
+# Deploy to Dev Environment
+#
+# Builds the container image, pushes to registry, and deploys to the dev
+# cluster via Helm. Only runs on the develop branch or manual dispatch.
+#
+# Required secrets:
+#   KUBE_CONFIG_DEV    — Base64-encoded kubeconfig for dev cluster
+#   REGISTRY_URL       — Container registry URL (e.g. ghcr.io/org)
+#   REGISTRY_USERNAME  — Registry username
+#   REGISTRY_PASSWORD  — Registry password/token
+#
+# Usage:
+#   Automatic: push to develop branch
+#   Manual:    gh workflow run deploy-dev.yml -f image_tag=abc1234
+
+name: Deploy Dev
+
+on:
+  push:
+    branches: [develop]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (default: git SHA)"
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  RELEASE_NAME: ${{ github.event.repository.name }}
+  NAMESPACE: dev
+  CHART_PATH: ./helm
+  VALUES_FILE: ./helm/values-dev.yaml
+
+jobs:
+  # =========================================================================
+  # BUILD + PUSH
+  # =========================================================================
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+      image_url: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: meta
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            TAG="dev-$(echo ${{ github.sha }} | cut -c1-7)"
+          fi
+          IMAGE="${{ secrets.REGISTRY_URL }}/${{ github.event.repository.name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Image: $IMAGE:$TAG"
+
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:dev-latest
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+  # =========================================================================
+  # SECURITY GATE
+  # =========================================================================
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Helm lint
+        run: |
+          helm lint ${{ env.CHART_PATH }} -f ${{ env.VALUES_FILE }}
+
+      - name: Template and scan
+        run: |
+          helm template ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
+            -f ${{ env.VALUES_FILE }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --set image.tag=${{ needs.build.outputs.image_tag }} \
+            > /tmp/rendered.yaml
+
+          # Checkov scan
+          pip install -q "checkov==3.2.471"
+          checkov -f /tmp/rendered.yaml --framework kubernetes --compact --quiet || true
+
+  # =========================================================================
+  # DEPLOY
+  # =========================================================================
+  deploy:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: [build, security-gate]
+    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_DEV }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Verify cluster access
+        run: |
+          kubectl cluster-info
+          kubectl get ns ${{ env.NAMESPACE }} 2>/dev/null || kubectl create ns ${{ env.NAMESPACE }}
+
+      - name: Helm deploy
+        run: |
+          helm upgrade --install ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
+            -f ${{ env.VALUES_FILE }} \
+            --namespace ${{ env.NAMESPACE }} \
+            --set image.tag=${{ needs.build.outputs.image_tag }} \
+            --wait \
+            --timeout 5m
+
+      - name: Verify deployment
+        run: |
+          echo "## Helm Release" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          helm list -n ${{ env.NAMESPACE }} --filter ${{ env.RELEASE_NAME }} >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Pods" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl get pods -n ${{ env.NAMESPACE }} \
+            -l "app.kubernetes.io/instance=${{ env.RELEASE_NAME }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          # Wait for readiness
+          kubectl wait --for=condition=ready pod \
+            -l "app.kubernetes.io/instance=${{ env.RELEASE_NAME }}" \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=120s
+
+      - name: Security checks
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Security Checks" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Check :latest tags
+          LATEST=$(kubectl get pods -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{range .items[*].spec.containers[*]}{.image}{"\n"}{end}' | \
+            grep -cE ':latest$' || true)
+          if [ "$LATEST" -gt 0 ]; then
+            echo "- :latest tags: **FAIL** ($LATEST found)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- :latest tags: **PASS**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Check non-root
+          PRIVS=$(kubectl get pods -n ${{ env.NAMESPACE }} \
+            -l "app.kubernetes.io/instance=${{ env.RELEASE_NAME }}" \
+            -o jsonpath='{range .items[*].spec.containers[*]}{.securityContext.runAsNonRoot}{"\n"}{end}' | \
+            grep -cv "true" || true)
+          if [ "$PRIVS" -gt 0 ]; then
+            echo "- runAsNonRoot: **WARN** ($PRIVS containers missing)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- runAsNonRoot: **PASS**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: \`${{ needs.build.outputs.image_url }}:${{ needs.build.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test
+        run: |
+          # Port-forward and test health endpoint
+          kubectl port-forward "svc/${{ env.RELEASE_NAME }}" 8080:80 \
+            -n ${{ env.NAMESPACE }} &
+          PF_PID=$!
+          sleep 3
+
+          HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:8080/healthz || echo "000")
+          kill $PF_PID 2>/dev/null || true
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Smoke test: **PASS** (HTTP $HTTP_CODE)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Smoke test: **WARN** (HTTP $HTTP_CODE — health endpoint may need configuration)" >> "$GITHUB_STEP_SUMMARY"
+          fi

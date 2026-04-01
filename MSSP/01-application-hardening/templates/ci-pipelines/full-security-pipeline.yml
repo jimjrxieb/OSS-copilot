@@ -1,0 +1,457 @@
+# =============================================================================
+# GP-COPILOT - SECURE CI/CD PIPELINE
+# =============================================================================
+#
+# This workflow implements a comprehensive shift-left security scanning
+# pipeline aligned with CKS (Certified Kubernetes Security Specialist),
+# CKA (Certified Kubernetes Administrator), and CCSP standards.
+#
+# Scanners included:
+# - Gitleaks: Secret detection
+# - Semgrep: Multi-language SAST
+# - Bandit: Python security
+# - Trivy: Container/IaC/Dependency scanning
+# - Grype: Dependency CVEs
+# - Checkov: IaC misconfigurations
+# - Kubescape: NSA/CISA K8s hardening
+# - Polaris: K8s best practices
+# - Kube-bench: CIS Kubernetes benchmark
+# - Hadolint: Dockerfile linting
+# - Conftest: OPA policy checks
+#
+# Usage:
+#   Copy this file to .github/workflows/security.yaml in your repository
+#
+# =============================================================================
+
+name: gp-copilot Pipeline
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      full_scan:
+        description: 'Run full scan including slow checks'
+        required: false
+        default: 'false'
+
+# Prevent concurrent runs on the same branch
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Minimum severity to fail the build
+  SEVERITY_THRESHOLD: HIGH
+  # GuardPoint report endpoint (optional)
+  GP_REPORT_ENDPOINT: ""
+
+jobs:
+  # ===========================================================================
+  # SECRET DETECTION
+  # ===========================================================================
+  secrets-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for git-based detection
+
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --verbose --redact
+
+      - name: Upload Gitleaks Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: results.sarif
+          retention-days: 30
+
+  # ===========================================================================
+  # SAST (Static Application Security Testing)
+  # ===========================================================================
+  sast-scan:
+    name: SAST Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+            p/cwe-top-25
+            p/kubernetes
+            p/dockerfile
+            p/github-actions
+          generateSarif: true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Bandit (Python)
+        if: hashFiles('**/*.py') != ''
+        run: |
+          pip install "bandit==1.8.6"
+          bandit -r . -f sarif -o bandit.sarif --severity-level medium || true
+
+      - name: Upload Bandit SARIF
+        if: hashFiles('bandit.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  # ===========================================================================
+  # DEPENDENCY SCANNING
+  # ===========================================================================
+  dependency-scan:
+    name: Dependency Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy Dependency Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-deps.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'library'
+
+      - name: Grype Dependency Scan
+        uses: anchore/scan-action@v4
+        with:
+          path: '.'
+          fail-build: false
+          severity-cutoff: high
+          output-format: sarif
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-deps
+
+      - name: Upload Grype SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: grype
+
+  # ===========================================================================
+  # CONTAINER SCANNING
+  # ===========================================================================
+  container-scan:
+    name: Container Scanning
+    runs-on: ubuntu-latest
+    if: hashFiles('**/Dockerfile') != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Hadolint Dockerfile Lint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint.sarif
+          failure-threshold: warning
+
+      - name: Build Container Image
+        run: |
+          if [ -f Dockerfile ]; then
+            docker build -t scan-target:${{ github.sha }} .
+          fi
+
+      - name: Trivy Container Scan
+        if: hashFiles('Dockerfile') != ''
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'scan-target:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-container.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Hadolint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint
+
+      - name: Upload Trivy Container SARIF
+        if: always() && hashFiles('trivy-container.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-container.sarif
+          category: trivy-container
+
+  # ===========================================================================
+  # KUBERNETES MANIFEST SCANNING
+  # ===========================================================================
+  kubernetes-scan:
+    name: Kubernetes Security
+    runs-on: ubuntu-latest
+    if: hashFiles('**/*.yaml', '**/*.yml') != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy K8s Config Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-k8s.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Checkov IaC Scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: kubernetes,dockerfile,github_actions
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: true
+
+      - name: Kubescape NSA/CISA Scan
+        uses: kubescape/github-action@v3.0.18
+        with:
+          format: sarif
+          outputFile: kubescape.sarif
+          frameworks: nsa,mitre,cis-eks
+          severityThreshold: medium
+
+      - name: Polaris Best Practices
+        run: |
+          curl -fsSL https://github.com/FairwindsOps/polaris/releases/download/9.5.0/polaris_linux_amd64.tar.gz | tar xz
+          ./polaris audit --audit-path . --format sarif > polaris.sarif || true
+
+      - name: Upload Trivy K8s SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-k8s.sarif
+          category: trivy-k8s
+
+      - name: Upload Checkov SARIF
+        if: always() && hashFiles('checkov.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      - name: Upload Kubescape SARIF
+        if: always() && hashFiles('kubescape.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: kubescape.sarif
+          category: kubescape
+
+  # ===========================================================================
+  # TERRAFORM SCANNING
+  # ===========================================================================
+  terraform-scan:
+    name: Terraform Security
+    runs-on: ubuntu-latest
+    if: hashFiles('**/*.tf') != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: TFsec Scan
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          sarif_file: tfsec.sarif
+          soft_fail: true
+
+      - name: Checkov Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-tf.sarif
+          soft_fail: true
+
+      - name: Upload TFsec SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: tfsec.sarif
+          category: tfsec
+
+  # ===========================================================================
+  # OPA POLICY VALIDATION
+  # ===========================================================================
+  policy-check:
+    name: OPA Policy Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Conftest
+        run: |
+          curl -fsSL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz | tar xz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Run Conftest
+        run: |
+          # Use repo's local policy/ directory for OPA rules
+          # To add policies: create policy/*.rego files in your repo
+          if [ -d "policy" ] && ls policy/*.rego 1>/dev/null 2>&1; then
+            find . -name "*.yaml" -o -name "*.yml" | \
+              grep -v node_modules | \
+              grep -v .github | \
+              grep -v .git | \
+              xargs conftest test --policy policy --output json > conftest-results.json || true
+          else
+            echo "No policy/*.rego files found — skipping Conftest"
+            echo '{"results": []}' > conftest-results.json
+          fi
+
+      - name: Upload Conftest Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: conftest-results
+          path: conftest-results.json
+
+  # ===========================================================================
+  # GITHUB ACTIONS SECURITY
+  # ===========================================================================
+  gha-security:
+    name: GitHub Actions Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan GitHub Actions
+        run: |
+          # Check for unpinned actions
+          echo "Checking for unpinned GitHub Actions..."
+          grep -r "uses:" .github/workflows/*.yml 2>/dev/null | \
+            grep -v "@" | \
+            grep -v "#" || echo "All actions are pinned"
+
+          # Check for dangerous permissions
+          echo "Checking for overly permissive permissions..."
+          grep -r "permissions:" .github/workflows/*.yml 2>/dev/null | \
+            grep -E "write-all|contents: write" || echo "No dangerous permissions found"
+
+      - name: Zizmor GHA Scanner
+        run: |
+          pip install "zizmor>=1.0.0,<2.0.0" || true
+          zizmor .github/workflows/ --format sarif > zizmor.sarif 2>/dev/null || true
+
+      - name: Upload Zizmor SARIF
+        if: hashFiles('zizmor.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+  # ===========================================================================
+  # CIS KUBERNETES BENCHMARK (Cluster Scan)
+  # ===========================================================================
+  cis-benchmark:
+    name: CIS Kubernetes Benchmark
+    runs-on: ubuntu-latest
+    if: github.event.inputs.full_scan == 'true' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Kube-bench
+        run: |
+          curl -fsSL https://github.com/aquasecurity/kube-bench/releases/download/v0.8.0/kube-bench_0.8.0_linux_amd64.tar.gz | tar xz
+          sudo mv kube-bench /usr/local/bin/
+
+      - name: Run Kube-bench (EKS)
+        if: env.CLUSTER_TYPE == 'eks'
+        run: |
+          kube-bench run --benchmark eks-1.2.0 --json > kubebench.json || true
+
+      - name: Upload Kube-bench Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubebench-results
+          path: kubebench.json
+
+  # ===========================================================================
+  # AGGREGATE RESULTS
+  # ===========================================================================
+  aggregate-results:
+    name: Aggregate Security Results
+    runs-on: ubuntu-latest
+    needs:
+      - secrets-scan
+      - sast-scan
+      - dependency-scan
+      - container-scan
+      - kubernetes-scan
+      - terraform-scan
+      - policy-check
+      - gha-security
+    if: always()
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: security-results
+
+      - name: Generate Summary
+        run: |
+          echo "# gp-copilot Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Gitleaks (Secrets) | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST (Semgrep/Bandit) | ${{ needs.sast-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies (Trivy/Grype) | ${{ needs.dependency-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Containers (Hadolint/Trivy) | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Kubernetes (Kubescape/Polaris/Checkov) | ${{ needs.kubernetes-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Terraform (TFsec) | ${{ needs.terraform-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| OPA Policies (Conftest) | ${{ needs.policy-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Actions | ${{ needs.gha-security.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Powered by GP-Copilot*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for Critical Failures
+        if: |
+          needs.secrets-scan.result == 'failure' ||
+          needs.sast-scan.result == 'failure'
+        run: |
+          echo "::error::Critical security scan failed!"
+          exit 1

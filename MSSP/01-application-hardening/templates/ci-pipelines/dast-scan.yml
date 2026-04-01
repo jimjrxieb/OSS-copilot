@@ -1,0 +1,169 @@
+# DAST Scanning Pipeline — Nuclei + ZAP
+#
+# Triggers:
+#   - Manual (workflow_dispatch) — provide target URL
+#   - After staging deployment (deployment_status)
+#
+# NOT triggered on push/PR — DAST needs a running application.
+#
+# Usage:
+#   gh workflow run dast-scan.yml -f target_url=https://staging.example.com
+#   gh workflow run dast-scan.yml -f target_url=https://staging.example.com -f scan_mode=full
+
+name: DAST Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Target URL to scan (e.g. https://staging.example.com)"
+        required: true
+        type: string
+      scan_mode:
+        description: "ZAP scan mode"
+        required: false
+        type: choice
+        options:
+          - baseline
+          - full
+          - api
+        default: baseline
+      nuclei_tags:
+        description: "Nuclei template tags"
+        required: false
+        type: string
+        default: "cves,misconfig,exposure,default-login"
+
+  deployment_status:
+
+permissions:
+  contents: read
+
+jobs:
+  nuclei:
+    name: Nuclei Scan
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nuclei
+        run: |
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Determine target URL
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "url=${{ inputs.target_url }}" >> "$GITHUB_OUTPUT"
+            echo "tags=${{ inputs.nuclei_tags }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=${{ github.event.deployment_status.target_url }}" >> "$GITHUB_OUTPUT"
+            echo "tags=cves,misconfig,exposure,default-login" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Nuclei
+        run: |
+          nuclei \
+            -u "${{ steps.target.outputs.url }}" \
+            -tags "${{ steps.target.outputs.tags }}" \
+            -exclude-tags "dos,fuzz,intrusive" \
+            -rate-limit 150 \
+            -bulk-size 25 \
+            -severity critical,high,medium,low \
+            -jsonl -o nuclei-results.jsonl \
+            -silent || true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Nuclei DAST Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Target: \`${{ steps.target.outputs.url }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f nuclei-results.jsonl ] && [ -s nuclei-results.jsonl ]; then
+            TOTAL=$(wc -l < nuclei-results.jsonl)
+            CRIT=$(grep -c '"critical"' nuclei-results.jsonl || true)
+            HIGH=$(grep -c '"high"' nuclei-results.jsonl || true)
+            echo "| Severity | Count |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Critical | $CRIT |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| High | $HIGH |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| **Total** | **$TOTAL** |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No findings detected." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuclei-results
+          path: nuclei-results.jsonl
+          retention-days: 30
+
+  zap:
+    name: ZAP Baseline Scan
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine target URL and mode
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "url=${{ inputs.target_url }}" >> "$GITHUB_OUTPUT"
+            echo "mode=${{ inputs.scan_mode }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=${{ github.event.deployment_status.target_url }}" >> "$GITHUB_OUTPUT"
+            echo "mode=baseline" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run ZAP
+        run: |
+          mkdir -p zap-results
+          docker run --rm \
+            -v "$(pwd)/zap-results:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-${{ steps.target.outputs.mode }}-scan.py \
+            -t "${{ steps.target.outputs.url }}" \
+            -J zap-results.json \
+            || true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## ZAP DAST Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Target: \`${{ steps.target.outputs.url }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Mode: \`${{ steps.target.outputs.mode }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f zap-results/zap-results.json ]; then
+            ALERTS=$(python3 -c "
+          import json
+          d = json.load(open('zap-results/zap-results.json'))
+          total = sum(len(s.get('alerts', [])) for s in d.get('site', []))
+          print(total)
+          " 2>/dev/null || echo "0")
+            echo "Total alerts: **$ALERTS**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No results file generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-results
+          path: zap-results/
+          retention-days: 30

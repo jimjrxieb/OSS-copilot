@@ -1,0 +1,48 @@
+# Nuclei configuration
+# Used by: nuclei_scan_npc.py
+#
+# Docs: https://docs.projectdiscovery.io/tools/nuclei/running#nuclei-config
+
+# Rate limiting — conservative to avoid DoS on client targets
+rate-limit: 150          # max requests per second
+timeout: 10              # seconds per request
+bulk-size: 25            # max hosts scanned in parallel
+concurrency: 25          # max templates executed in parallel
+retries: 1               # retry failed requests once
+
+# Template selection
+tags:
+  - cves
+  - misconfig
+  - exposure
+  - default-login
+
+# NEVER run these against client targets
+exclude-tags:
+  - dos
+  - fuzz
+  - intrusive
+
+# Severity — report everything, filter in post-processing
+severity:
+  - critical
+  - high
+  - medium
+  - low
+  - info
+
+# OOB detection for SSRF, blind XSS, blind SQLi
+no-interactsh: false
+
+# Output
+jsonl: true
+no-color: true
+silent: true
+
+# Template update
+# Uncomment to auto-update templates before scan:
+# update-templates: true
+
+# Stats
+stats: true
+stats-interval: 10       # seconds between progress updates

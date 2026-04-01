@@ -1,0 +1,94 @@
+# Go Pre-Commit Configuration
+# Security + code quality for Go projects
+# Docs: https://pre-commit.com/
+
+default_stages: [commit]
+
+fail_fast: false
+
+repos:
+  # ===== SECRET DETECTION (always first) =====
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+        name: Gitleaks (Secrets)
+        args: ['--config=.gitleaks.toml']
+        always_run: true
+
+  # ===== GO SECURITY =====
+  - repo: local
+    hooks:
+      - id: gosec
+        name: gosec (Go SAST)
+        entry: gosec -fmt json -out gosec-results.json ./...
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+  # ===== FORMATTING =====
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (Formatter)
+        entry: gofmt -w -s
+        language: system
+        files: \.go$
+
+      - id: goimports
+        name: goimports (Import Formatter)
+        entry: goimports -w
+        language: system
+        files: \.go$
+
+  # ===== LINTING =====
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v1.56.2
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint (Linter)
+        args: ['--timeout=3m']
+
+  # ===== BUILD CHECK =====
+  - repo: local
+    hooks:
+      - id: go-build
+        name: go build (Compile Check)
+        entry: go build ./...
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+      - id: go-vet
+        name: go vet (Static Analysis)
+        entry: go vet ./...
+        language: system
+        files: \.go$
+        pass_filenames: false
+
+  # ===== BASIC VALIDATION =====
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+        name: Check YAML
+      - id: check-json
+        name: Check JSON
+      - id: check-added-large-files
+        name: Check large files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+        name: Detect private keys
+      - id: end-of-file-fixer
+        name: Fix EOF
+      - id: trailing-whitespace
+        name: Trim whitespace
+
+  # ===== DOCKERFILE (if present) =====
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        name: Hadolint (Dockerfile)
+        args: ['--config=.hadolint.yaml']
+        files: Dockerfile

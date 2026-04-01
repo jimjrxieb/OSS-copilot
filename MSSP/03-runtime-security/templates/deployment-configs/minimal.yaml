@@ -1,0 +1,201 @@
+# jsa-infrasec Helm Values - Minimal/Dev Configuration
+# Lightweight configuration for development, testing, or proof of concept
+
+# Global settings
+nameOverride: "jsa-infrasec"
+fullnameOverride: "jsa-infrasec"
+
+# Image configuration
+image:
+  repository: gp-copilot/jsa-infrasec
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Replica count (single replica for dev)
+replicaCount: 1
+
+# Minimal resource limits
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# JADE integration (disabled for minimal setup)
+jade:
+  enabled: false
+
+# Watchers configuration (Falco only)
+watchers:
+  # Falco syscall monitoring
+  falco:
+    enabled: true
+    endpoint: "http://falco.falco:5000"
+    rules:
+      - k8s-audit  # Basic rules only
+    mitre:
+      enabled: false  # Disable enrichment for minimal setup
+
+  # Kubernetes watchers (minimal)
+  kubernetes:
+    events:
+      enabled: true
+      types: ["Warning", "Error"]
+    audit:
+      enabled: false
+    drift:
+      enabled: false
+    admission:
+      enabled: false
+    logs:
+      enabled: false
+
+  # Policy watchers (disabled)
+  policy:
+    gatekeeper:
+      enabled: false
+    kyverno:
+      enabled: false
+    conftest:
+      enabled: false
+
+  # IaC watchers (disabled)
+  iac:
+    terraform:
+      enabled: false
+    helm:
+      enabled: false
+
+  # Cloud watchers (disabled)
+  cloud:
+    aws:
+      enabled: false
+    azure:
+      enabled: false
+    gcp:
+      enabled: false
+
+  # Secrets watchers (disabled)
+  secrets:
+    kubernetes:
+      enabled: false
+    vault:
+      enabled: false
+    awsSecretsManager:
+      enabled: false
+
+# Responders configuration (logging only, no auto-fix)
+responders:
+  # Auto-fix DISABLED
+  autoFix:
+    enabled: false
+    dryRun: true  # Only log what would be fixed
+
+  # Snapshot disabled (not needed without auto-fix)
+  snapshot:
+    enabled: false
+
+  # All responders disabled
+  kubernetes:
+    podPatcher:
+      enabled: false
+    deploymentUpdater:
+      enabled: false
+    podIsolator:
+      enabled: false
+    podKiller:
+      enabled: false
+    namespaceIsolator:
+      enabled: false
+
+  policy:
+    networkPolicyGenerator:
+      enabled: false
+    rbacScoper:
+      enabled: false
+
+  cloud:
+    aws:
+      iamPolicyFixer:
+        enabled: false
+      s3BucketFixer:
+        enabled: false
+      securityGroupFixer:
+        enabled: false
+
+  secrets:
+    rotator:
+      enabled: false
+
+  forensics:
+    logCapturer:
+      enabled: true  # Keep log capture enabled
+      rank: "E"
+    snapshotCreator:
+      enabled: false
+    evidencePreserver:
+      enabled: false
+
+# Metrics and monitoring
+metrics:
+  prometheus:
+    enabled: true
+    port: 9100
+    path: /metrics
+    interval: 30s
+  serviceMonitor:
+    enabled: false  # Disabled for minimal
+
+# Alerts (console only, no Slack)
+alerts:
+  slack:
+    enabled: false
+  pagerduty:
+    enabled: false
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+  cloudWatch:
+    enabled: false
+
+# Service account
+serviceAccount:
+  create: true
+  name: "jsa-infrasec"
+
+# RBAC (minimal permissions)
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "events"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps"]
+      resources: ["deployments"]
+      verbs: ["get", "list", "watch"]
+
+# Pod security
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+# Persistence (disabled for minimal)
+persistence:
+  enabled: false
+
+# Network policy (disabled for minimal)
+networkPolicy:
+  enabled: false

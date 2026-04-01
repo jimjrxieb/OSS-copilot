@@ -1,0 +1,155 @@
+# k8s-audit.yaml
+# Custom Falco rules for Kubernetes audit log events.
+# Detects privilege escalation, suspicious RBAC changes, and secret access.
+#
+# Requires: Kubernetes audit logging enabled + Falco k8s_audit plugin
+# Enable in Falco: --set falcoctl.artifact.install.refs[0]=k8saudit
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/k8s-audit.yaml
+
+# ── Macros ────────────────────────────────────────────────────────────────
+- macro: non_system_user
+  condition: >
+    ka.user.name != "system:anonymous" and
+    ka.user.name != "system:unauthenticated" and
+    not (ka.user.name startswith "system:")
+
+- macro: system_namespaces
+  condition: >
+    ka.target.namespace in (kube-system, kube-public, kube-node-lease)
+
+# ── Rules ─────────────────────────────────────────────────────────────────
+
+# Detect: new ClusterRoleBinding for cluster-admin
+- rule: Attach to cluster-admin Role
+  desc: >
+    Detects when any subject is bound to the cluster-admin ClusterRole.
+    This grants unrestricted access to the entire cluster.
+  condition: >
+    ka.verb in (create, update, patch) and
+    ka.target.resource = clusterrolebindings and
+    ka.req.role.binding.role = cluster-admin and
+    non_system_user
+  output: >
+    Cluster-admin binding created
+    (user=%ka.user.name binding=%ka.target.name
+     subjects=%ka.req.binding.subjects verb=%ka.verb)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1078.001, k8s-audit]
+
+# Detect: privileged pod created
+- rule: Create Privileged Pod
+  desc: Detects creation of a pod with privileged: true in securityContext.
+  condition: >
+    ka.verb = create and
+    ka.target.resource = pods and
+    ka.req.pod.containers.privileged = true and
+    non_system_user
+  output: >
+    Privileged pod created
+    (user=%ka.user.name pod=%ka.target.name
+     ns=%ka.target.namespace image=%ka.req.pod.containers.image)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1611, k8s-audit]
+
+# Detect: pod with hostPID/hostNetwork/hostIPC
+- rule: Create HostNetwork Pod
+  desc: Pod requesting host-level namespaces.
+  condition: >
+    ka.verb = create and
+    ka.target.resource = pods and
+    (ka.req.pod.host_ipc = true or
+     ka.req.pod.host_pid = true or
+     ka.req.pod.host_network = true) and
+    non_system_user
+  output: >
+    Pod requesting host namespaces
+    (user=%ka.user.name pod=%ka.target.name
+     ns=%ka.target.namespace
+     host_ipc=%ka.req.pod.host_ipc
+     host_pid=%ka.req.pod.host_pid
+     host_network=%ka.req.pod.host_network)
+  priority: HIGH
+  tags: [MITRE_Defense_Evasion, T1611, k8s-audit]
+
+# Detect: secret accessed by non-controller
+- rule: K8s Secret Accessed
+  desc: >
+    Detects when a Kubernetes secret is read by a non-system user or
+    non-controller service account. May indicate credential theft.
+  condition: >
+    ka.verb in (get, list) and
+    ka.target.resource = secrets and
+    non_system_user and
+    not (ka.user.name startswith "system:serviceaccount:kube-system") and
+    not (ka.user.name startswith "system:serviceaccount:cert-manager")
+  output: >
+    K8s secret accessed
+    (user=%ka.user.name secret=%ka.target.name
+     ns=%ka.target.namespace verb=%ka.verb)
+  priority: WARNING
+  tags: [MITRE_Credential_Access, T1552.007, k8s-audit]
+
+# Detect: exec into running container
+- rule: Exec Into Container
+  desc: >
+    Someone is running kubectl exec. Legitimate for debugging,
+    but warrants a log entry in production.
+  condition: >
+    ka.verb = create and
+    ka.target.resource = pods/exec and
+    non_system_user
+  output: >
+    kubectl exec
+    (user=%ka.user.name pod=%ka.target.name
+     ns=%ka.target.namespace command=%ka.req.pod.containers.args)
+  priority: NOTICE
+  tags: [MITRE_Execution, T1609, k8s-audit]
+
+# Detect: RBAC Role with wildcard rules modified
+- rule: ClusterRole with Wildcard Created
+  desc: A ClusterRole granting wildcard (*) permissions was created or modified.
+  condition: >
+    ka.verb in (create, update, patch) and
+    ka.target.resource in (roles, clusterroles) and
+    ka.req.role.rules.resources contains "*" and
+    non_system_user
+  output: >
+    Wildcard ClusterRole modified
+    (user=%ka.user.name role=%ka.target.name
+     ns=%ka.target.namespace verb=%ka.verb)
+  priority: HIGH
+  tags: [MITRE_Privilege_Escalation, T1078, k8s-audit]
+
+# Detect: NodePort service created (exposes service directly on node IP)
+- rule: NodePort Service Created
+  desc: >
+    NodePort services expose a port on every node's IP.
+    Should be rare in production — LoadBalancer or Ingress preferred.
+  condition: >
+    ka.verb = create and
+    ka.target.resource = services and
+    ka.req.service.type = NodePort and
+    non_system_user and
+    not system_namespaces
+  output: >
+    NodePort service created
+    (user=%ka.user.name service=%ka.target.name
+     ns=%ka.target.namespace port=%ka.req.service.ports)
+  priority: WARNING
+  tags: [MITRE_Defense_Evasion, T1021, k8s-audit]
+
+# Detect: ConfigMap in kube-system modified by non-system user
+- rule: Kube-system ConfigMap Modified
+  desc: ConfigMap in kube-system edited by non-system account — potential tamper.
+  condition: >
+    ka.verb in (create, update, patch, delete) and
+    ka.target.resource = configmaps and
+    ka.target.namespace = kube-system and
+    non_system_user
+  output: >
+    kube-system ConfigMap modified
+    (user=%ka.user.name configmap=%ka.target.name verb=%ka.verb)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1601, k8s-audit]

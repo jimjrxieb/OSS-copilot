@@ -1,0 +1,56 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  annotations:
+    policies.kyverno.io/title: Disallow Privileged Containers
+    policies.kyverno.io/category: Pod Security Standards (Baseline)
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Privileged mode disables most security mechanisms and must not be allowed.
+      This policy ensures that the `privileged` field is set to `false`.
+    checkov.id: CKV_K8S_1
+    gp-copilot/category: "baseline"
+    gp-copilot/standard: "CIS-5.2.1"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: privileged-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Privileged mode is disallowed. The field securityContext.privileged must not be true."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.containers[].securityContext.privileged || `false` }}"
+                operator: AnyIn
+                value:
+                  - true
+    - name: privileged-init-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.initContainers[] || `[]` | length(@) }}"
+            operator: GreaterThan
+            value: 0
+      validate:
+        message: "Privileged mode is disallowed for init containers."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.initContainers[].securityContext.privileged || `false` }}"
+                operator: AnyIn
+                value:
+                  - true

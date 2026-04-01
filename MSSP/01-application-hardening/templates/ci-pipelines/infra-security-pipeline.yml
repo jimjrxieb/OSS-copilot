@@ -1,0 +1,226 @@
+# =============================================================================
+# GP-COPILOT — INFRASTRUCTURE SECURITY PIPELINE
+# =============================================================================
+#
+# Scans Kubernetes manifests, Terraform, IaC configs, and OPA policies.
+# This is the "Cluster" C — everything that defines infrastructure.
+#
+# Scanners: Checkov, Kubescape, Polaris, Conftest, Kube-bench, Zizmor
+# Matches: run-infra-scanners.sh
+#
+# Usage:
+#   Copy to .github/workflows/security-infra.yml in your repository
+#
+# =============================================================================
+
+name: gp-copilot Infra Security
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - '**/*.yaml'
+      - '**/*.yml'
+      - '**/*.tf'
+      - '**/Dockerfile*'
+      - 'policy/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - '**/*.yaml'
+      - '**/*.yml'
+      - '**/*.tf'
+      - '**/Dockerfile*'
+      - 'policy/**'
+      - '.github/workflows/**'
+  schedule:
+    - cron: '0 2 * * *'  # nightly at 2am UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-infra-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SEVERITY_THRESHOLD: HIGH
+
+jobs:
+  # ===========================================================================
+  # KUBERNETES MANIFEST SCANNING
+  # ===========================================================================
+  kubernetes-scan:
+    name: Kubernetes Security
+    runs-on: ubuntu-latest
+    if: hashFiles('**/*.yaml', '**/*.yml') != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy K8s Config Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-k8s.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Checkov IaC Scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: kubernetes,dockerfile,github_actions
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: true
+
+      - name: Kubescape NSA/CISA Scan
+        uses: kubescape/github-action@v3.0.18
+        with:
+          format: sarif
+          outputFile: kubescape.sarif
+          frameworks: nsa,mitre,cis-eks
+          severityThreshold: medium
+
+      - name: Polaris Best Practices
+        run: |
+          curl -fsSL https://github.com/FairwindsOps/polaris/releases/download/9.5.0/polaris_linux_amd64.tar.gz | tar xz
+          ./polaris audit --audit-path . --format sarif > polaris.sarif || true
+
+      - name: Upload Trivy K8s SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-k8s.sarif
+          category: trivy-k8s
+
+      - name: Upload Checkov SARIF
+        if: always() && hashFiles('checkov.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      - name: Upload Kubescape SARIF
+        if: always() && hashFiles('kubescape.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: kubescape.sarif
+          category: kubescape
+
+  # ===========================================================================
+  # TERRAFORM SCANNING
+  # ===========================================================================
+  terraform-scan:
+    name: Terraform Security
+    runs-on: ubuntu-latest
+    if: hashFiles('**/*.tf') != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkov Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-tf.sarif
+          soft_fail: true
+
+      - name: Upload Checkov Terraform SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-tf.sarif
+          category: checkov-terraform
+
+  # ===========================================================================
+  # OPA POLICY VALIDATION
+  # ===========================================================================
+  policy-check:
+    name: OPA Policy Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Conftest
+        run: |
+          curl -fsSL https://github.com/open-policy-agent/conftest/releases/download/v0.56.0/conftest_0.56.0_Linux_x86_64.tar.gz | tar xz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Run Conftest
+        run: |
+          if [ -d "policy" ] && ls policy/*.rego 1>/dev/null 2>&1; then
+            find . -name "*.yaml" -o -name "*.yml" | \
+              grep -v node_modules | \
+              grep -v .github | \
+              grep -v .git | \
+              xargs conftest test --policy policy --output json > conftest-results.json || true
+          else
+            echo "No policy/*.rego files found — skipping Conftest"
+            echo '{"results": []}' > conftest-results.json
+          fi
+
+      - name: Upload Conftest Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: conftest-results
+          path: conftest-results.json
+
+  # ===========================================================================
+  # GITHUB ACTIONS SECURITY
+  # ===========================================================================
+  gha-security:
+    name: GitHub Actions Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Unpinned Actions
+        run: |
+          echo "Checking for unpinned GitHub Actions..."
+          grep -r "uses:" .github/workflows/*.yml 2>/dev/null | \
+            grep -v "@" | \
+            grep -v "#" || echo "All actions are pinned"
+
+          echo "Checking for overly permissive permissions..."
+          grep -r "permissions:" .github/workflows/*.yml 2>/dev/null | \
+            grep -E "write-all|contents: write" || echo "No dangerous permissions found"
+
+      - name: Zizmor GHA Scanner
+        run: |
+          pip install "zizmor>=1.0.0,<2.0.0" || true
+          zizmor .github/workflows/ --format sarif > zizmor.sarif 2>/dev/null || true
+
+      - name: Upload Zizmor SARIF
+        if: hashFiles('zizmor.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+  # ===========================================================================
+  # AGGREGATE RESULTS
+  # ===========================================================================
+  infra-summary:
+    name: Infra Security Summary
+    runs-on: ubuntu-latest
+    needs: [kubernetes-scan, terraform-scan, policy-check, gha-security]
+    if: always()
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# GP-Copilot Infrastructure Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Kubernetes (Checkov/Kubescape/Polaris) | ${{ needs.kubernetes-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Terraform (Checkov) | ${{ needs.terraform-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| OPA Policies (Conftest) | ${{ needs.policy-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Actions (Zizmor) | ${{ needs.gha-security.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Powered by GP-Copilot — Infrastructure Security Pipeline*" >> $GITHUB_STEP_SUMMARY

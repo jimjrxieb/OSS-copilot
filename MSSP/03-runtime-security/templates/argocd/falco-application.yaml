@@ -1,0 +1,139 @@
+# ArgoCD Application — Falco runtime threat detection
+# Sync wave -2: Falco must be watching BEFORE application workloads deploy.
+#
+# This replaces manual `helm install falco` — ArgoCD manages the lifecycle.
+# If Falco drifts from declared state, ArgoCD self-heals it.
+#
+# Apply with:
+#   kubectl apply -f falco-application.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falco
+  namespace: argocd
+  labels:
+    app: falco
+    layer: runtime
+    managed-by: gp-copilot
+    package: 03-deploy-runtime
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: runtime-security
+
+  source:
+    repoURL: https://falcosecurity.github.io/charts
+    chart: falco
+    targetRevision: 4.*          # Pin to Falco 4.x, auto-patch
+    helm:
+      releaseName: falco
+      values: |
+        driver:
+          kind: modern_ebpf
+
+        falco:
+          jsonOutput: true
+          jsonIncludeOutputProperty: true
+          logLevel: info
+
+          # Custom rules from 03-RUNTIME-SECURITY/01-detection/falco-rules/
+          # Mount as ConfigMap or use rulesFiles in values
+          rulesFiles:
+            - /etc/falco/falco_rules.yaml
+            - /etc/falco/rules.d/*.yaml
+
+          # Forward alerts to jsa-infrasec when deployed
+          # Uncomment after deploying package 05-JSA-AUTONOMOUS:
+          # httpOutput:
+          #   enabled: true
+          #   url: http://jsa-infrasec.jsa-infrasec:8000/api/falco
+
+        falcoctl:
+          artifact:
+            install:
+              enabled: true
+            follow:
+              enabled: true
+
+        tolerations:
+          - effect: NoSchedule
+            operator: Exists
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: falco
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+
+  # Health check — Falco DaemonSet must have all pods ready
+  ignoreDifferences:
+    - group: apps
+      kind: DaemonSet
+      jsonPointers:
+        - /spec/template/metadata/annotations
+---
+# falco-exporter — Prometheus metrics for Falco alerts
+# Sync wave -1: exporter deploys after Falco, before apps
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falco-exporter
+  namespace: argocd
+  labels:
+    app: falco-exporter
+    layer: runtime
+    managed-by: gp-copilot
+    package: 03-deploy-runtime
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: runtime-security
+
+  source:
+    repoURL: https://falcosecurity.github.io/charts
+    chart: falco-exporter
+    targetRevision: 0.*
+    helm:
+      releaseName: falco-exporter
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: falco
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

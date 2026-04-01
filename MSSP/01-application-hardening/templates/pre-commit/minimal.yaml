@@ -1,0 +1,37 @@
+# Minimal Pre-Commit Configuration
+# Fast checks for secrets and basic linting
+# Docs: https://pre-commit.com/
+
+default_language_version:
+  python: python3.11
+
+default_stages: [commit]
+
+fail_fast: true  # Stop at first failure for speed
+
+repos:
+  # ===== SECRET DETECTION (CRITICAL) =====
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+        name: Gitleaks (Secrets)
+        args: ['--config=.gitleaks.toml']
+
+  # ===== BASIC VALIDATION =====
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+        name: Check YAML
+      - id: check-json
+        name: Check JSON
+      - id: check-added-large-files
+        name: Check large files
+        args: ['--maxkb=1000']
+      - id: detect-private-key
+        name: Detect private keys
+      - id: end-of-file-fixer
+        name: Fix EOF
+      - id: trailing-whitespace
+        name: Trim whitespace

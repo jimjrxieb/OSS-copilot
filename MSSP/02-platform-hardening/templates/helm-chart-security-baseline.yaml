@@ -1,0 +1,154 @@
+# ============================================================================
+# Helm Chart Security Baseline
+# GP-CONSULTING/02-CLUSTER-HARDENING
+#
+# Every Helm chart deploying to a hardened cluster MUST pass these checks.
+# Gatekeeper admission control enforces them at deploy time.
+#
+# Usage:
+#   1. Give this file to developers as a reference
+#   2. Run conftest against rendered Helm templates:
+#      helm template my-chart ./chart | conftest test - --policy policies/conftest/
+#   3. Or validate with kubescape:
+#      helm template my-chart ./chart | kubescape scan framework nsa -
+#
+# This is NOT a deployable manifest — it's a reference template showing
+# the minimum security fields every Deployment/StatefulSet/DaemonSet needs.
+# ============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-secure-deployment
+  labels:
+    # REQUIRED: Gatekeeper requires these labels
+    app.kubernetes.io/name: my-app
+    app.kubernetes.io/instance: my-release
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: my-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: my-app
+        app.kubernetes.io/instance: my-release
+    spec:
+      # ── Pod-level security ──────────────────────────────
+      securityContext:
+        runAsNonRoot: true           # CIS 5.2.7 — never run as root
+        runAsUser: 1000              # non-zero UID
+        runAsGroup: 1000             # non-zero GID
+        fsGroup: 1000               # volume ownership
+        seccompProfile:
+          type: RuntimeDefault       # CIS 5.7.2 — restrict syscalls
+
+      # Don't mount K8s API token unless the app calls the K8s API
+      automountServiceAccountToken: false   # CIS 5.1.6
+
+      serviceAccountName: my-app     # dedicated SA, not "default"
+
+      containers:
+        - name: app
+          image: ghcr.io/my-org/my-app:v1.2.3   # pinned tag, not :latest
+          imagePullPolicy: IfNotPresent           # CKV_K8S_15
+
+          # ── Container-level security ──────────────────
+          securityContext:
+            allowPrivilegeEscalation: false   # CIS 5.2.5
+            readOnlyRootFilesystem: true      # CIS 5.2.4
+            privileged: false                 # CIS 5.2.1
+            capabilities:
+              drop:
+                - ALL                         # CIS 5.2.9
+              # add back ONLY if needed:
+              # add:
+              #   - NET_BIND_SERVICE          # for ports < 1024
+
+          # ── Resource limits (REQUIRED) ────────────────
+          # Adjust values based on actual observed usage.
+          # Use profile-and-set-limits.sh to measure.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          # ── Health probes (REQUIRED) ──────────────────
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # ── Ports ─────────────────────────────────────
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ── Writable paths (if readOnlyRootFilesystem) ─
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+
+      # ── Volumes ──────────────────────────────────────
+      volumes:
+        - name: tmp
+          emptyDir: {}           # writable /tmp
+        - name: data
+          persistentVolumeClaim:
+            claimName: my-app-data
+
+---
+# ============================================================================
+# CHECKLIST — Print this, check each box before deploying
+# ============================================================================
+#
+# Pod spec:
+#   [ ] runAsNonRoot: true
+#   [ ] runAsUser: <non-zero>
+#   [ ] seccompProfile.type: RuntimeDefault
+#   [ ] automountServiceAccountToken: false (unless K8s API needed)
+#   [ ] serviceAccountName: dedicated (not "default")
+#
+# Container spec:
+#   [ ] allowPrivilegeEscalation: false
+#   [ ] readOnlyRootFilesystem: true
+#   [ ] capabilities.drop: [ALL]
+#   [ ] resources.requests AND resources.limits set
+#   [ ] livenessProbe set
+#   [ ] readinessProbe set
+#   [ ] image tag pinned (not :latest)
+#   [ ] imagePullPolicy: IfNotPresent or Always
+#
+# Labels:
+#   [ ] app.kubernetes.io/name
+#   [ ] app.kubernetes.io/instance
+#
+# If readOnlyRootFilesystem: true:
+#   [ ] emptyDir for /tmp
+#   [ ] emptyDir for any other writable paths
+#
+# Network:
+#   [ ] Service type: ClusterIP (not NodePort)
+#   [ ] NetworkPolicy in the chart (or applied separately)
+#
+# ============================================================================

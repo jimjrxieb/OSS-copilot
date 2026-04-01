@@ -1,0 +1,172 @@
+# toolbox-pod.yaml — Deploy runtime-toolkit as a long-running pod.
+# Operator execs in, runs deploys/health-checks, results persist to PVC.
+#
+# Usage:
+#   kubectl apply -f 03-templates/deployment-configs/toolbox-pod.yaml
+#   kubectl exec -it runtime-toolkit -n gp-security -- bash
+#   kubectl exec -it runtime-toolkit -n gp-security -- deploy.sh --dry-run
+#   kubectl exec -it runtime-toolkit -n gp-security -- health-check.sh
+#
+# Copy reports off cluster:
+#   kubectl cp gp-security/runtime-toolkit:/opt/runtime-toolkit/reports/ ./reports/
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gp-security
+  labels:
+    app.kubernetes.io/part-of: gp-copilot
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runtime-toolkit
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: runtime-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: runtime-toolkit
+  labels:
+    app.kubernetes.io/name: runtime-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+rules:
+  # Read access for audit and health checks
+  - apiGroups: [""]
+    resources: ["pods", "services", "namespaces", "configmaps", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  # Write access for deploy operations (Falco + jsa-infrasec)
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["create", "update", "patch", "delete"]
+  # Exec into pods for health checks and debugging
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # Secrets access for Helm releases
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Namespace management
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: runtime-toolkit
+  labels:
+    app.kubernetes.io/name: runtime-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: runtime-toolkit
+subjects:
+  - kind: ServiceAccount
+    name: runtime-toolkit
+    namespace: gp-security
+---
+# Ensure the toolkit pod can always reach the K8s API server,
+# even after deploy.sh applies default-deny policies.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runtime-toolkit-egress
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: runtime-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-toolkit
+  policyTypes:
+    - Egress
+  egress:
+    # K8s API server
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    # DNS resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: runtime-toolkit-reports
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: runtime-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: runtime-toolkit
+  namespace: gp-security
+  labels:
+    app.kubernetes.io/name: runtime-toolkit
+    app.kubernetes.io/part-of: gp-copilot
+spec:
+  serviceAccountName: runtime-toolkit
+  imagePullSecrets:
+    - name: ecr-pull
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: toolkit
+      image: 026090554981.dkr.ecr.us-east-1.amazonaws.com/gp-copilot/runtime-toolkit:latest
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: false
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+      volumeMounts:
+        - name: reports
+          mountPath: /opt/runtime-toolkit/reports
+  volumes:
+    - name: reports
+      persistentVolumeClaim:
+        claimName: runtime-toolkit-reports

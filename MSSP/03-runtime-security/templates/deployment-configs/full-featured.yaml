@@ -1,0 +1,413 @@
+# jsa-infrasec Helm Values - Full-Featured / Enterprise Maximum Coverage
+# Every watcher, every responder, every integration — turned ON.
+# Use this as a starting point for enterprise deployments, then disable
+# what you don't need for your specific environment.
+#
+# Prerequisites:
+#   - Production K8s cluster with sufficient resources
+#   - Prometheus + Grafana stack
+#   - Falco DaemonSet deployed
+#   - JADE supervisor running
+#   - Cloud provider credentials configured (if using cloud watchers)
+#   - Snapshot storage configured (S3, GCS, Azure Blob, or PVC)
+#
+# Resource requirements:
+#   - CPU: 1000m request / 4000m limit per replica
+#   - Memory: 1Gi request / 4Gi limit per replica
+#   - 3 replicas (HA) = 3Gi memory, 3 CPU minimum
+#
+# Usage:
+#   cp deployment-configs/full-featured.yaml my-values.yaml
+#   # Disable cloud sections you don't use
+#   # Edit CHANGE ME values
+#   helm install jsa-infrasec gp-copilot/jsa-infrasec -n gp-security -f my-values.yaml
+
+# Global settings
+nameOverride: "jsa-infrasec"
+fullnameOverride: "jsa-infrasec"
+
+# Image configuration
+image:
+  repository: gp-copilot/jsa-infrasec
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# HA: 3 replicas with pod anti-affinity
+replicaCount: 3
+
+# Enterprise resource limits
+resources:
+  requests:
+    cpu: 1000m
+    memory: 1Gi
+  limits:
+    cpu: 4000m
+    memory: 4Gi
+
+# JADE integration (full config)
+jade:
+  enabled: true
+  url: "http://jade.gp-security:5000"
+  rankCeiling: "C"  # JADE's maximum authority (hardcoded, never raise)
+  timeout: 300
+  retries: 3
+  healthCheck:
+    enabled: true
+    interval: 30
+
+# ── ALL 20 Watchers Enabled ──────────────────────────────────────────────────
+
+watchers:
+  # Falco syscall monitoring (full enrichment)
+  falco:
+    enabled: true
+    endpoint: "http://falco.falco:5000"
+    rules:
+      - mitre-attack
+      - k8s-audit
+      - container-activity
+      - file-integrity
+    mitre:
+      enabled: true
+      enrichment: true
+
+  # Kubernetes watchers (6 watchers)
+  kubernetes:
+    events:
+      enabled: true
+      types: ["Warning", "Error"]
+    audit:
+      enabled: true
+      logPath: "/var/log/kubernetes/audit.log"
+    drift:
+      enabled: true
+      interval: 60
+    admission:
+      enabled: true
+      deniedOnly: false  # Log all admissions for full visibility
+    logs:
+      enabled: true
+      anomalyDetection: true
+
+  # Policy watchers (3 watchers)
+  policy:
+    gatekeeper:
+      enabled: true
+      prometheus: true
+    kyverno:
+      enabled: true
+      policyReports: true
+    conftest:
+      enabled: true  # Enable for CI policy webhook integration
+
+  # IaC watchers (3 watchers)
+  iac:
+    terraform:
+      enabled: true
+      backend: "s3"  # CHANGE ME — or "gcs", "azurerm", "local"
+    cloudformation:
+      enabled: true
+      region: "us-east-1"  # CHANGE ME
+    helm:
+      enabled: true
+      releases: ["all"]
+
+  # Cloud watchers (4 watchers — configure for your provider)
+  # Enable the section for your cloud provider, disable others
+  cloud:
+    aws:
+      enabled: true  # CHANGE ME — disable if not on AWS
+      region: "us-east-1"  # CHANGE ME
+      accountId: "123456789012"  # CHANGE ME
+      iamRole: "arn:aws:iam::123456789012:role/jsa-infrasec"  # CHANGE ME
+      watchers:
+        iam:
+          enabled: true
+          events: ["CreateRole", "AttachRolePolicy", "PutRolePolicy", "CreateUser", "AddUserToGroup"]
+        s3:
+          enabled: true
+          buckets: ["all"]
+        ec2:
+          enabled: true
+          events: ["RunInstances", "AuthorizeSecurityGroupIngress", "ModifyInstanceAttribute"]
+        vpc:
+          enabled: true
+          events: ["CreateRoute", "DeleteRoute", "CreateSubnet", "ModifyVpcAttribute"]
+    azure:
+      enabled: false  # CHANGE ME — enable if on Azure
+      # subscriptionId: "00000000-0000-0000-0000-000000000000"
+      # resourceGroup: "my-aks-rg"
+      # tenantId: "00000000-0000-0000-0000-000000000000"
+    gcp:
+      enabled: false  # CHANGE ME — enable if on GCP
+      # projectId: "my-gcp-project"
+      # region: "us-central1"
+
+  # Secrets watchers (4 watchers)
+  secrets:
+    kubernetes:
+      enabled: true
+      namespaces: ["all"]
+    vault:
+      enabled: true
+      address: "https://vault.internal:8200"  # CHANGE ME
+    awsSecretsManager:
+      enabled: true  # CHANGE ME — disable if not on AWS
+      region: "us-east-1"
+    # Additional: Azure Key Vault, GCP Secret Manager
+    # azureKeyVault:
+    #   enabled: true
+    #   vaultName: "my-keyvault"
+    # gcpSecretManager:
+    #   enabled: true
+    #   projectId: "my-gcp-project"
+
+# ── ALL 16 Responders Enabled ────────────────────────────────────────────────
+
+responders:
+  # Auto-fix settings
+  autoFix:
+    enabled: true
+    dryRun: false
+    maxRank: "D"
+    excludeNamespaces:
+      - kube-system
+      - kube-public
+      - gp-security
+
+  # Snapshot/rollback (full config)
+  snapshot:
+    enabled: true
+    storage: "s3://my-company-jsa-snapshots/"  # CHANGE ME
+    encryption: true
+    retention:
+      days: 30
+      maxCount: 5000
+
+  # JADE approval workflow
+  jadeApproval:
+    required: true
+    timeout: 300
+    fallback: "escalate"
+
+  # Kubernetes responders (5)
+  kubernetes:
+    podPatcher:
+      enabled: true
+      rank: "D"
+    deploymentUpdater:
+      enabled: true
+      rank: "D"
+    podIsolator:
+      enabled: true
+      rank: "C"
+    podKiller:
+      enabled: true
+      rank: "C"
+    namespaceIsolator:
+      enabled: true
+      rank: "B"
+
+  # Policy responders (3)
+  policy:
+    networkPolicyGenerator:
+      enabled: true
+      rank: "D"
+    pspUpdater:
+      enabled: true
+      rank: "C"
+    rbacScoper:
+      enabled: true
+      rank: "C"
+
+  # Cloud responders (3 — configure per provider)
+  cloud:
+    aws:
+      iamPolicyFixer:
+        enabled: true  # CHANGE ME — disable if not on AWS
+        rank: "C"
+      s3BucketFixer:
+        enabled: true
+        rank: "D"
+      securityGroupFixer:
+        enabled: true
+        rank: "D"
+    # azure:
+    #   nsgFixer:
+    #     enabled: true
+    #     rank: "D"
+    #   storageFixer:
+    #     enabled: true
+    #     rank: "D"
+    #   rbacFixer:
+    #     enabled: true
+    #     rank: "C"
+
+  # Secrets responders (2)
+  secrets:
+    rotator:
+      enabled: true
+      rank: "D"
+    vaultPolicyUpdater:
+      enabled: true
+      rank: "C"
+
+  # Forensics responders (3)
+  forensics:
+    logCapturer:
+      enabled: true
+      rank: "E"
+      retentionDays: 90
+    snapshotCreator:
+      enabled: true
+      rank: "E"
+    evidencePreserver:
+      enabled: true
+      rank: "D"
+      storage: "s3://my-company-forensics/"  # CHANGE ME
+
+# Metrics and monitoring
+metrics:
+  prometheus:
+    enabled: true
+    port: 9100
+    path: /metrics
+    interval: 30s
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    labels:
+      release: prometheus
+
+# Alerts (all channels enabled)
+alerts:
+  slack:
+    enabled: true
+    webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"  # CHANGE ME
+    channels:
+      critical: "#security-critical"
+      high: "#security-alerts"
+      medium: "#security-log"
+      info: "#security-verbose"
+    mentions:
+      critical: "@security-oncall"
+      high: "@security-team"
+  pagerduty:
+    enabled: true
+    integrationKey: ""  # CHANGE ME
+  webhook:
+    enabled: false
+    url: ""  # Custom integration endpoint
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+  cloudWatch:
+    enabled: true  # CHANGE ME — disable if not on AWS
+    region: "us-east-1"
+    logGroup: "/aws/eks/jsa-infrasec"
+    streamPrefix: "jsa-"
+
+# Service account
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/jsa-infrasec"  # CHANGE ME
+  name: "jsa-infrasec"
+
+# RBAC (full permissions for all responders)
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "pods/exec", "events", "secrets", "configmaps", "services", "namespaces"]
+      verbs: ["get", "list", "watch", "patch", "delete", "create"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      verbs: ["get", "list", "watch", "patch", "update"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["networkpolicies"]
+      verbs: ["get", "list", "watch", "create", "patch", "delete"]
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+    - apiGroups: ["batch"]
+      resources: ["jobs", "cronjobs"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["policy"]
+      resources: ["podsecuritypolicies", "poddisruptionbudgets"]
+      verbs: ["get", "list", "watch", "patch"]
+
+# Pod security
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: "gp3"  # CHANGE ME — per cloud provider
+  size: 20Gi  # Larger for full-featured
+
+# Network policy (strict)
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      ports:
+      - protocol: TCP
+        port: 9100
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: falco
+      ports:
+      - protocol: TCP
+        port: 8000  # Falco webhook
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443  # HTTPS (cloud APIs, Slack, PagerDuty)
+      - protocol: TCP
+        port: 5000  # JADE
+      - protocol: TCP
+        port: 8200  # Vault
+
+# HA: Pod anti-affinity (spread across nodes)
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - jsa-infrasec
+          topologyKey: kubernetes.io/hostname
+
+# Tolerations (schedule on dedicated security nodes if available)
+tolerations:
+  - key: "dedicated"
+    operator: "Equal"
+    value: "security"
+    effect: "NoSchedule"

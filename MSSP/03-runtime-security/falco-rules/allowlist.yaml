@@ -1,0 +1,122 @@
+# allowlist.yaml
+# Common Falco rule exceptions to reduce false positives.
+# Tune after 1 week of baseline telemetry.
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/allowlist.yaml
+#
+# What each section suppresses:
+#   1. Monitoring agents (Prometheus, Datadog, Grafana) — constant API calls
+#   2. CI/CD runners — shells spawned by pipeline jobs
+#   3. Init containers — write to /etc during startup
+#   4. Package managers in dev/staging — apt/yum/pip installs
+#   5. Log collectors — reading files below /var/log
+#
+# Customize the namespace/image conditions for your client environment.
+
+# ── 1. Monitoring agents — legitimate K8s API access ──────────────────────
+- rule: Contact K8s API Server From Container
+  append: true
+  exceptions:
+    - name: monitoring_agents
+      fields: [proc.name]
+      comps: [in]
+      values:
+        - [prometheus]
+        - [node-exporter]
+        - [kube-state-metrics]
+        - [grafana-agent]
+        - [datadog-agent]
+        - [otel-collector]
+        - [fluentd]
+        - [fluent-bit]
+
+# ── 2. Terminal shell in container — allow in dev/staging ─────────────────
+- rule: Terminal shell in container
+  append: true
+  exceptions:
+    - name: dev_namespaces
+      fields: [k8s.ns.name]
+      comps: [in]
+      values:
+        - [dev]
+        - [development]
+        - [staging]
+        - [test]
+    - name: debug_pods
+      fields: [k8s.pod.label.debug]
+      comps: [=]
+      values:
+        - ["true"]
+
+# ── 3. Write below /etc — allow config management ─────────────────────────
+- rule: Write below etc
+  append: true
+  exceptions:
+    - name: config_management
+      fields: [proc.name]
+      comps: [in]
+      values:
+        - [puppet]
+        - [chef-client]
+        - [ansible]
+        - [salt-minion]
+    - name: init_containers
+      fields: [container.image.repository]
+      comps: [in]
+      values:
+        - [bitnami/kubectl]
+        - [alpine]
+
+# ── 4. Package manager install — allow in CI namespaces ──────────────────
+- rule: Launch Package Management Process in Container
+  append: true
+  exceptions:
+    - name: ci_namespaces
+      fields: [k8s.ns.name]
+      comps: [in]
+      values:
+        - [ci]
+        - [cd]
+        - [gitlab-runner]
+        - [github-actions]
+        - [jenkins]
+        - [build]
+
+# ── 5. Log file read — allow log aggregators ──────────────────────────────
+- rule: Read sensitive file untrusted
+  append: true
+  exceptions:
+    - name: log_collectors
+      fields: [proc.name]
+      comps: [in]
+      values:
+        - [fluentd]
+        - [fluent-bit]
+        - [filebeat]
+        - [logstash]
+        - [promtail]
+        - [vector]
+
+# ── 6. Network tools in container — allow cluster troubleshooting pods ────
+- rule: Netcat Remote Code Execution in Container
+  append: true
+  exceptions:
+    - name: network_debug
+      fields: [k8s.pod.label.role]
+      comps: [=]
+      values:
+        - [network-debug]
+
+# ── 7. File open by privileged container — allow storage provisioners ─────
+- rule: File Open by Privileged Container
+  append: true
+  exceptions:
+    - name: storage_provisioners
+      fields: [container.image.repository]
+      comps: [in]
+      values:
+        - [amazon/aws-ebs-csi-driver]
+        - [k8s.gcr.io/sig-storage/csi-node-driver-registrar]
+        - [registry.k8s.io/sig-storage/csi-provisioner]
+        - [rancher/local-path-provisioner]

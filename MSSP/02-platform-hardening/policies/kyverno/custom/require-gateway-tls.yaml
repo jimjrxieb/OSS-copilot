@@ -1,0 +1,57 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-gateway-tls
+  annotations:
+    policies.kyverno.io/title: Require TLS on Gateway listeners
+    policies.kyverno.io/category: Network Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Gateway
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Gateway listeners on port 443 must use HTTPS with TLS termination.
+      Denies Gateway resources with port 443 listeners that do not specify
+      protocol: HTTPS and a tls.certificateRefs entry. Enforces SC-8
+      (Transmission Confidentiality).
+    nist-800-53: SC-8
+    gp-copilot/category: "custom"
+    gp-copilot/standard: "GP-Copilot"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-https-on-443
+      match:
+        any:
+          - resources:
+              kinds:
+                - Gateway
+      validate:
+        message: >-
+          Gateway listeners on port 443 must use protocol HTTPS with TLS
+          configuration. Set spec.listeners[].protocol: HTTPS and provide
+          spec.listeners[].tls.certificateRefs.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.listeners[?port == `443`] | length(@) }}"
+                operator: GreaterThan
+                value: "0"
+              - key: "{{ request.object.spec.listeners[?port == `443` && protocol != 'HTTPS'] | length(@) }}"
+                operator: GreaterThan
+                value: "0"
+    - name: deny-wildcard-hostname
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+      validate:
+        message: >-
+          HTTPRoute must specify explicit hostnames. Wildcard (*) hostnames
+          are not allowed. Set spec.hostnames to specific domain names.
+        pattern:
+          spec:
+            hostnames:
+              - "!*"

@@ -1,0 +1,305 @@
+# jsa-infrasec Helm Values - On-Premises / Self-Hosted Kubernetes
+# Runtime security for on-prem, bare-metal, or self-managed K8s clusters
+# No cloud provider dependencies — fully self-contained
+#
+# Prerequisites:
+#   - Kubernetes cluster (kubeadm, k3s, RKE, etc.)
+#   - PersistentVolume provisioner OR MinIO for snapshot storage
+#   - Prometheus + Grafana (optional but recommended)
+#
+# Usage:
+#   cp deployment-configs/on-prem.yaml my-values.yaml
+#   # Edit CHANGE ME values (storage, Slack webhook)
+#   helm install jsa-infrasec gp-copilot/jsa-infrasec -n gp-security -f my-values.yaml
+
+# Global settings
+nameOverride: "jsa-infrasec"
+fullnameOverride: "jsa-infrasec"
+
+# Image configuration
+image:
+  repository: gp-copilot/jsa-infrasec
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Replica count
+replicaCount: 2
+
+# Resource limits
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# JADE integration
+jade:
+  enabled: true
+  url: "http://jade.gp-security:5000"
+  rankCeiling: "C"  # JADE's maximum authority (hardcoded, never raise)
+  timeout: 300
+  retries: 3
+
+# Watchers configuration
+watchers:
+  # Falco syscall monitoring
+  falco:
+    enabled: true
+    endpoint: "http://falco.falco:5000"
+    rules:
+      - mitre-attack
+      - k8s-audit
+      - container-activity
+    mitre:
+      enabled: true
+      enrichment: true
+
+  # Kubernetes watchers (all enabled — this is the core for on-prem)
+  kubernetes:
+    events:
+      enabled: true
+      types: ["Warning", "Error"]
+    audit:
+      enabled: true
+      logPath: "/var/log/kubernetes/audit.log"
+    drift:
+      enabled: true
+      interval: 60
+    admission:
+      enabled: true
+      deniedOnly: true
+    logs:
+      enabled: true
+      anomalyDetection: true
+
+  # Policy watchers
+  policy:
+    gatekeeper:
+      enabled: true
+      prometheus: true
+    kyverno:
+      enabled: true
+      policyReports: true
+    conftest:
+      enabled: false
+
+  # IaC watchers
+  iac:
+    terraform:
+      enabled: false  # No cloud state to watch
+    helm:
+      enabled: true
+      releases: ["all"]
+
+  # Cloud watchers (all disabled — no cloud provider)
+  cloud:
+    aws:
+      enabled: false
+    azure:
+      enabled: false
+    gcp:
+      enabled: false
+
+  # Secrets watchers (K8s only)
+  secrets:
+    kubernetes:
+      enabled: true
+      namespaces: ["all"]
+    vault:
+      enabled: false  # Enable if using HashiCorp Vault on-prem
+      # address: "https://vault.internal:8200"
+    awsSecretsManager:
+      enabled: false
+
+# Responders configuration
+responders:
+  # Auto-fix settings
+  autoFix:
+    enabled: true
+    dryRun: false
+    maxRank: "D"
+    excludeNamespaces:
+      - kube-system
+      - kube-public
+      - gp-security
+
+  # Snapshot/rollback
+  snapshot:
+    enabled: true
+    # Option 1: PersistentVolumeClaim (default for on-prem)
+    storage: "pvc://jsa-snapshots"  # CHANGE ME — uses PVC named jsa-snapshots
+    # Option 2: MinIO (S3-compatible on-prem object storage)
+    # storage: "s3://minio.minio:9000/jsa-snapshots"  # Uncomment for MinIO
+    encryption: false  # Enable if storage backend supports it
+    retention:
+      days: 30
+      maxCount: 1000
+
+  # JADE approval workflow
+  jadeApproval:
+    required: true
+    timeout: 300
+    fallback: "escalate"
+
+  # Kubernetes responders
+  kubernetes:
+    podPatcher:
+      enabled: true
+      rank: "D"
+    deploymentUpdater:
+      enabled: true
+      rank: "D"
+    podIsolator:
+      enabled: true
+      rank: "C"
+    podKiller:
+      enabled: true
+      rank: "C"
+    namespaceIsolator:
+      enabled: true
+      rank: "B"
+
+  # Policy responders
+  policy:
+    networkPolicyGenerator:
+      enabled: true
+      rank: "D"
+    rbacScoper:
+      enabled: true
+      rank: "C"
+
+  # Cloud responders (disabled — no cloud)
+  cloud:
+    aws:
+      iamPolicyFixer:
+        enabled: false
+      s3BucketFixer:
+        enabled: false
+      securityGroupFixer:
+        enabled: false
+
+  # Secrets responders
+  secrets:
+    rotator:
+      enabled: true
+      rank: "D"
+
+  # Forensics
+  forensics:
+    logCapturer:
+      enabled: true
+      rank: "E"
+    snapshotCreator:
+      enabled: true
+      rank: "E"
+    evidencePreserver:
+      enabled: true
+      rank: "D"
+      storage: "pvc://jsa-forensics"  # CHANGE ME
+
+# Metrics and monitoring
+metrics:
+  prometheus:
+    enabled: true
+    port: 9100
+    path: /metrics
+    interval: 30s
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+
+# Alerts
+alerts:
+  slack:
+    enabled: true
+    webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"  # CHANGE ME
+    channels:
+      critical: "#security-critical"
+      high: "#security-alerts"
+      medium: "#security-log"
+      info: "#security-verbose"
+    mentions:
+      critical: "@security-oncall"
+      high: "@security-team"
+  pagerduty:
+    enabled: false
+    integrationKey: ""
+
+# Logging (stdout/file only — no cloud log shipping)
+logging:
+  level: "info"
+  format: "json"
+  cloudWatch:
+    enabled: false
+  cloudLogging:
+    enabled: false
+  azureMonitor:
+    enabled: false
+
+# Service account (no cloud-specific annotations)
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "jsa-infrasec"
+
+# RBAC
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "events", "secrets", "configmaps"]
+      verbs: ["get", "list", "watch", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets"]
+      verbs: ["get", "list", "watch", "patch", "update"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["networkpolicies"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["roles", "rolebindings"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+
+# Pod security
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+# Persistence (use cluster default storage class)
+persistence:
+  enabled: true
+  storageClass: ""  # Uses cluster default — change if needed
+  size: 10Gi
+
+# Network policy
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      ports:
+      - protocol: TCP
+        port: 9100
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443  # HTTPS (Slack, external webhooks)
+      - protocol: TCP
+        port: 5000  # JADE, Falco

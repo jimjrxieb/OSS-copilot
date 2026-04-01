@@ -1,0 +1,381 @@
+# mitre-mappings.yaml
+# MITRE ATT&CK enrichment rules for Kubernetes runtime threat detection.
+# Maps common attack patterns to MITRE tactics and techniques for SOC correlation.
+#
+# Covers: Initial Access, Execution, Persistence, Privilege Escalation,
+#         Defense Evasion, Credential Access, Discovery, Lateral Movement,
+#         Collection, Exfiltration, Impact
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/mitre-mappings.yaml
+
+# ── Lists ───────────────────────────────────────────────────────────────────
+- list: mitre_exfil_tools
+  items: [curl, wget, nc, ncat, socat, scp, rsync, rclone, aws, gsutil]
+
+- list: mitre_recon_tools
+  items: [nmap, masscan, zmap, nikto, dirb, gobuster, ffuf, wpscan]
+
+- list: mitre_persistence_dirs
+  items: [/etc/cron.d, /etc/crontab, /var/spool/cron, /etc/systemd/system]
+
+- list: mitre_credential_files
+  items:
+    - /etc/shadow
+    - /etc/passwd
+    - /root/.ssh
+    - /home
+    - /var/run/secrets/kubernetes.io/serviceaccount/token
+    - /root/.kube/config
+    - /root/.aws/credentials
+
+- list: mitre_evasion_tools
+  items: [shred, wipe, srm, history, unset, truncate]
+
+# ── Macros ──────────────────────────────────────────────────────────────────
+- macro: in_container
+  condition: >
+    container.id != host
+
+- macro: outbound_conn
+  condition: >
+    ((evt.type = connect and evt.dir = <) or
+     (evt.type in (sendto, sendmsg) and evt.dir = < and fd.l4proto != udp)) and
+    fd.typechar = 4
+
+# ── Initial Access ──────────────────────────────────────────────────────────
+
+# T1190 — Exploit Public-Facing Application
+- rule: MITRE T1190 Reverse Shell Spawned in Container
+  desc: >
+    A network-connected process spawned a shell. Indicates possible exploitation
+    of a public-facing application leading to reverse shell.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (bash, sh, dash, zsh, csh, ksh) and
+    proc.pname in (java, python, python3, node, ruby, php, httpd, nginx, apache2)
+  output: >
+    Reverse shell from web process
+    (proc=%proc.name pproc=%proc.pname container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Initial_Access, T1190, container, network]
+
+# T1133 — External Remote Services
+- rule: MITRE T1133 SSH Service Started in Container
+  desc: >
+    An SSH daemon was launched inside a container. Containers should not run
+    SSH — this indicates backdoor access or misconfiguration.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (sshd, dropbear)
+  output: >
+    SSH daemon started in container
+    (proc=%proc.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Initial_Access, T1133, container]
+
+# ── Execution ───────────────────────────────────────────────────────────────
+
+# T1059.004 — Command and Scripting Interpreter: Unix Shell
+- rule: MITRE T1059 Shell Spawned by Non-Shell Parent
+  desc: >
+    A shell was spawned by a process that does not normally invoke shells.
+    Indicates command injection or post-exploitation activity.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (bash, sh, dash, zsh) and
+    not proc.pname in (bash, sh, dash, zsh, csh, ksh, sshd, login, su, sudo, cron, crond,
+                        containerd-shim, runc, docker, systemd, init, supervisord)
+  output: >
+    Unexpected shell from non-shell parent
+    (shell=%proc.name parent=%proc.pname container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     cmdline=%proc.cmdline)
+  priority: WARNING
+  tags: [MITRE_Execution, T1059.004, container]
+
+# T1609 — Container Administration Command
+- rule: MITRE T1609 Kubectl Executed Inside Container
+  desc: >
+    kubectl or helm was executed inside a running container, indicating
+    possible lateral movement or container administration abuse.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (kubectl, helm, oc, crictl)
+  output: >
+    K8s admin tool executed in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Execution, T1609, container, k8s]
+
+# ── Persistence ─────────────────────────────────────────────────────────────
+
+# T1053.003 — Scheduled Task/Job: Cron
+- rule: MITRE T1053 Cron Job Created in Container
+  desc: >
+    A file was written to a cron directory inside a container.
+    Containers should use K8s CronJobs, not local cron.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name startswith /etc/cron or
+     fd.name startswith /var/spool/cron)
+  output: >
+    Cron file written in container
+    (file=%fd.name proc=%proc.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1053.003, container]
+
+# T1098 — Account Manipulation
+- rule: MITRE T1098 User Account Modified in Container
+  desc: >
+    User management commands were executed inside a container.
+    This should not happen in production containers.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (useradd, usermod, adduser, passwd, chpasswd, groupadd, groupmod)
+  output: >
+    User account modified in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1098, container]
+
+# ── Privilege Escalation ────────────────────────────────────────────────────
+
+# T1611 — Escape to Host
+- rule: MITRE T1611 Container Escape via nsenter
+  desc: >
+    nsenter was used to enter host namespaces from a container.
+    This is a well-known container escape technique.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name = nsenter
+  output: >
+    nsenter container escape attempt
+    (cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1611, container]
+
+# T1078 — Valid Accounts
+- rule: MITRE T1078 Service Account Token Accessed
+  desc: >
+    A process read the Kubernetes service account token from the projected
+    volume. May indicate credential harvesting for API abuse.
+  condition: >
+    open_read and
+    in_container and
+    fd.name = /var/run/secrets/kubernetes.io/serviceaccount/token and
+    not proc.name in (curl, wget, kubectl, kube-proxy, kubelet, coredns, prometheus)
+  output: >
+    Service account token read by unexpected process
+    (proc=%proc.name file=%fd.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: WARNING
+  tags: [MITRE_Privilege_Escalation, T1078, MITRE_Credential_Access, T1552.007, container]
+
+# ── Defense Evasion ─────────────────────────────────────────────────────────
+
+# T1070 — Indicator Removal
+- rule: MITRE T1070 Log or History Deletion in Container
+  desc: >
+    A process is deleting or truncating logs, shell history, or audit files
+    inside a container. Indicates anti-forensics activity.
+  condition: >
+    spawned_process and
+    in_container and
+    (proc.name in (shred, wipe, srm) or
+     (proc.name in (rm, unlink) and
+      (proc.cmdline contains ".bash_history" or
+       proc.cmdline contains "/var/log" or
+       proc.cmdline contains ".log")) or
+     (proc.name = truncate and
+      (proc.cmdline contains "/var/log" or
+       proc.cmdline contains ".history")))
+  output: >
+    Log/history deletion in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Defense_Evasion, T1070, container]
+
+# T1036 — Masquerading
+- rule: MITRE T1036 Process Name Masquerading in Container
+  desc: >
+    A binary is running from a non-standard path but using a name that
+    matches common system utilities. May indicate a trojanized binary.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (ls, ps, netstat, top, curl, wget) and
+    not proc.exepath startswith /usr/ and
+    not proc.exepath startswith /bin/ and
+    not proc.exepath startswith /sbin/
+  output: >
+    Suspicious binary path masquerading as system tool
+    (proc=%proc.name exepath=%proc.exepath container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Defense_Evasion, T1036, container]
+
+# ── Credential Access ───────────────────────────────────────────────────────
+
+# T1552.007 — Container API
+- rule: MITRE T1552 Cloud Metadata Service Accessed
+  desc: >
+    A process inside a container contacted the cloud metadata endpoint
+    (169.254.169.254). Attackers use this to steal IAM credentials.
+  condition: >
+    outbound_conn and
+    in_container and
+    fd.sip = 169.254.169.254
+  output: >
+    Cloud metadata service accessed from container
+    (proc=%proc.name fd=%fd.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Credential_Access, T1552.007, container, cloud]
+
+# T1528 — Steal Application Access Token
+- rule: MITRE T1528 Environment Variable Credential Dump
+  desc: >
+    A process is reading /proc/self/environ or /proc/*/environ to extract
+    environment variables, which often contain secrets and tokens.
+  condition: >
+    open_read and
+    in_container and
+    fd.name glob "/proc/*/environ"
+  output: >
+    Process environment read for credential harvesting
+    (proc=%proc.name file=%fd.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Credential_Access, T1528, container]
+
+# ── Discovery ──────────────────────────────────────────────────────────────
+
+# T1083 — File and Directory Discovery
+- rule: MITRE T1083 Filesystem Enumeration in Container
+  desc: >
+    Common enumeration tools were launched in a container. Attackers use
+    find/locate to discover sensitive files after gaining access.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (find, locate, mlocate, tree) and
+    (proc.cmdline contains "/etc" or
+     proc.cmdline contains "/root" or
+     proc.cmdline contains "/home" or
+     proc.cmdline contains "/var/run/secrets")
+  output: >
+    Filesystem enumeration in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: WARNING
+  tags: [MITRE_Discovery, T1083, container]
+
+# T1046 — Network Service Discovery
+- rule: MITRE T1046 Network Scanning from Container
+  desc: >
+    Network reconnaissance tools were launched inside a container.
+    Indicates lateral movement preparation.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (nmap, masscan, zmap, nikto, dirb, gobuster, ffuf, wpscan, netcat, ncat)
+  output: >
+    Network scanning tool launched in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Discovery, T1046, container, network]
+
+# ── Lateral Movement ───────────────────────────────────────────────────────
+
+# T1021 — Remote Services
+- rule: MITRE T1021 SSH Client Launched in Container
+  desc: >
+    An SSH client was launched from inside a container, indicating
+    potential lateral movement to other hosts or containers.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (ssh, scp, sftp)
+  output: >
+    SSH client launched in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Lateral_Movement, T1021, container, network]
+
+# ── Collection ─────────────────────────────────────────────────────────────
+
+# T1119 — Automated Collection
+- rule: MITRE T1119 Bulk File Copy in Container
+  desc: >
+    tar, zip, or similar archive tools were used to package files in a
+    container. Often a precursor to data exfiltration.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (tar, gzip, zip, 7z, bzip2, xz, zstd, rar) and
+    (proc.cmdline contains "/etc" or
+     proc.cmdline contains "/home" or
+     proc.cmdline contains "/var" or
+     proc.cmdline contains "/root" or
+     proc.cmdline contains "/tmp")
+  output: >
+    Bulk file archiving in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: WARNING
+  tags: [MITRE_Collection, T1119, container]
+
+# ── Exfiltration ───────────────────────────────────────────────────────────
+
+# T1048 — Exfiltration Over Alternative Protocol
+- rule: MITRE T1048 Data Exfil Tool with External Connection
+  desc: >
+    A common data exfiltration tool made an outbound connection from a
+    container. Correlate with data staging activity.
+  condition: >
+    outbound_conn and
+    in_container and
+    proc.name in (curl, wget, nc, ncat, socat, scp, rsync, rclone) and
+    not fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+  output: >
+    Exfil tool connected to external IP
+    (proc=%proc.name dest=%fd.sip:%fd.sport container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Exfiltration, T1048, container, network]
+
+# ── Impact ─────────────────────────────────────────────────────────────────
+
+# T1496 — Resource Hijacking
+- rule: MITRE T1496 Known Crypto Miner Launched
+  desc: >
+    A known cryptocurrency mining binary was executed in a container.
+    Indicates resource hijacking for cryptojacking.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (xmrig, minergate, cpuminer, minerd, ethminer, cgminer, bfgminer,
+                  t-rex, phoenixminer, nbminer, lolminer, ccminer)
+  output: >
+    Crypto miner launched in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Impact, T1496, container, cryptomining]

@@ -1,0 +1,176 @@
+# Fluent Bit — Helm Values
+#
+# Fluent Bit is the lightweight log collector (DaemonSet on every node).
+# It reads container logs, parses them, enriches with K8s metadata,
+# and ships to Loki (or Elasticsearch/CloudWatch/S3).
+#
+# Install:
+#   helm repo add fluent https://fluent.github.io/helm-charts
+#   helm install fluent-bit fluent/fluent-bit -n logging -f fluent-bit-values.yaml
+#
+# Why Fluent Bit over Fluentd:
+# - 10x lower memory (Fluent Bit ~30MB vs Fluentd ~300MB)
+# - Written in C (faster, lower CPU)
+# - Native K8s filter (no extra plugins)
+# - Fluentd is for complex routing — Fluent Bit handles 95% of use cases
+
+image:
+  tag: "3.0.0"
+
+# Run as DaemonSet (one per node)
+kind: DaemonSet
+
+# Security context
+podSecurityContext:
+  runAsUser: 0    # needs root to read /var/log — see note below
+  # NOTE: Fluent Bit needs read access to /var/log/containers/.
+  # On most K8s distros this requires running as root.
+  # Alternative: use a security context with readOnlyRootFilesystem
+  # and mount /var/log as read-only.
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+    add: ["DAC_READ_SEARCH"]    # read log files without being file owner
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+# Tolerations — run on ALL nodes including masters
+tolerations:
+  - operator: Exists
+
+# ── Fluent Bit Configuration ─────────────────────────────────────────
+config:
+  # SERVICE — global settings
+  service: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  /fluent-bit/etc/parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+        Health_Check  On
+
+  # INPUT — read container logs
+  inputs: |
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            cri
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     10MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+
+    [INPUT]
+        Name              tail
+        Tag               falco.*
+        Path              /var/log/falco/events.log
+        Parser            json
+        DB                /var/log/flb_falco.db
+        Mem_Buf_Limit     5MB
+
+  # FILTER — enrich with K8s metadata
+  filters: |
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude On
+        Labels              On
+        Annotations         Off
+
+    [FILTER]
+        Name                modify
+        Match               falco.*
+        Add                 source falco
+        Add                 pipeline gp-runtime
+
+    [FILTER]
+        Name          grep
+        Match         kube.*
+        Exclude       log /healthz|readyz|livez/
+
+  # OUTPUT — ship to Loki
+  outputs: |
+    [OUTPUT]
+        Name                   loki
+        Match                  *
+        Host                   loki.logging.svc.cluster.local
+        Port                   3100
+        Labels                 job=fluent-bit
+        Label_Keys             $kubernetes['namespace_name'],$kubernetes['pod_name'],$kubernetes['container_name']
+        Remove_Keys            kubernetes,stream
+        Auto_Kubernetes_Labels On
+        Line_Format            json
+
+    # === Alternative: Elasticsearch ===
+    # [OUTPUT]
+    #     Name            es
+    #     Match           *
+    #     Host            elasticsearch.logging.svc.cluster.local
+    #     Port            9200
+    #     Index           k8s-logs
+    #     Type            _doc
+    #     Logstash_Format On
+
+    # === Alternative: CloudWatch (EKS) ===
+    # [OUTPUT]
+    #     Name                cloudwatch_logs
+    #     Match               *
+    #     region              us-east-1
+    #     log_group_name      /eks/cluster-name
+    #     log_stream_prefix   fluent-bit-
+    #     auto_create_group   true
+
+  # PARSERS — log format detection
+  customParsers: |
+    [PARSER]
+        Name        cri
+        Format      regex
+        Regex       ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<log>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+
+# Service monitor for Prometheus
+serviceMonitor:
+  enabled: true
+
+# Liveness/readiness probes
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: http

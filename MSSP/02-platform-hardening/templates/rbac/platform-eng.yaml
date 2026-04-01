@@ -1,0 +1,129 @@
+# GP-Copilot RBAC Template: Platform Engineer
+# Cross-namespace read, limited write to infrastructure resources.
+# Designed for platform/SRE team members who manage cluster infrastructure.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-engineer
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    gp-copilot/template: rbac-platform-eng
+  annotations:
+    gp-copilot/value-add: "cross-namespace visibility with infrastructure write — replaces overly broad admin roles"
+    gp-copilot/package: "02-CLUSTER-HARDEN"
+rules:
+  # Cluster-wide read on everything
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - configmaps
+      - secrets
+      - events
+      - endpoints
+      - namespaces
+      - nodes
+      - persistentvolumes
+      - persistentvolumeclaims
+      - serviceaccounts
+      - resourcequotas
+      - limitranges
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+      - ingressclasses
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+      - clusterroles
+      - clusterrolebindings
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+      - podsecuritypolicies
+    verbs: ["get", "list", "watch"]
+
+  # Manage infrastructure resources
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - namespaces
+    verbs: ["create", "update", "patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingressclasses
+    verbs: ["create", "update", "patch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gatewayclasses
+      - gateways
+      - httproutes
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Manage Kyverno policies
+  - apiGroups: ["kyverno.io"]
+    resources:
+      - clusterpolicies
+      - policies
+      - policyreports
+      - clusterpolicyreports
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Manage Gatekeeper constraints
+  - apiGroups: ["constraints.gatekeeper.sh"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["templates.gatekeeper.sh"]
+    resources:
+      - constrainttemplates
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Manage ArgoCD applications
+  - apiGroups: ["argoproj.io"]
+    resources:
+      - applications
+      - applicationsets
+      - appprojects
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-engineer-binding
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    gp-copilot/template: rbac-platform-eng
+  annotations:
+    gp-copilot/value-add: "binds platform-engineer ClusterRole — no kube-system secret or RBAC write"
+    gp-copilot/package: "02-CLUSTER-HARDEN"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-engineer
+subjects:
+  - kind: Group
+    name: platform-engineering
+    apiGroup: rbac.authorization.k8s.io

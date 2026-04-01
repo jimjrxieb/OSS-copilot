@@ -1,0 +1,306 @@
+# jsa-infrasec Helm Values - AWS EKS Production
+# Comprehensive runtime security for AWS EKS clusters
+
+# Global settings
+nameOverride: "jsa-infrasec"
+fullnameOverride: "jsa-infrasec"
+
+# Image configuration
+image:
+  repository: gp-copilot/jsa-infrasec
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Replica count
+replicaCount: 2
+
+# Resource limits
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# JADE integration
+jade:
+  enabled: true
+  url: "http://jade.gp-security:5000"
+  rankCeiling: "C"  # JADE's maximum authority (hardcoded, never raise)
+  timeout: 300  # 5 minutes for JADE to decide
+  retries: 3
+
+# Watchers configuration
+watchers:
+  # Falco syscall monitoring
+  falco:
+    enabled: true
+    endpoint: "http://falco.falco:5000"
+    rules:
+      - mitre-attack
+      - k8s-audit
+      - container-activity
+    mitre:
+      enabled: true
+      enrichment: true
+
+  # Kubernetes watchers
+  kubernetes:
+    events:
+      enabled: true
+      types: ["Warning", "Error"]
+    audit:
+      enabled: true
+      logPath: "/var/log/kubernetes/audit.log"
+    drift:
+      enabled: true
+      interval: 60  # Check every 60 seconds
+    admission:
+      enabled: true
+      deniedOnly: true  # Only log denied admissions
+    logs:
+      enabled: true
+      anomalyDetection: true
+
+  # Policy watchers
+  policy:
+    gatekeeper:
+      enabled: true
+      prometheus: true
+    kyverno:
+      enabled: true
+      policyReports: true
+    conftest:
+      enabled: false  # CI-only, not runtime
+
+  # Infrastructure as Code watchers
+  iac:
+    terraform:
+      enabled: false  # Enable if using Terraform Cloud/Enterprise
+    helm:
+      enabled: true
+      releases: ["all"]  # Monitor all Helm releases
+
+  # AWS Cloud watchers
+  cloud:
+    aws:
+      enabled: true
+      region: "us-east-1"  # CHANGE ME
+      accountId: "123456789012"  # CHANGE ME
+      iamRole: "arn:aws:iam::123456789012:role/jsa-infrasec"  # CHANGE ME
+      watchers:
+        iam:
+          enabled: true
+          events: ["CreateRole", "AttachRolePolicy", "PutRolePolicy"]
+        s3:
+          enabled: true
+          buckets: ["all"]  # Or specify: ["bucket1", "bucket2"]
+        ec2:
+          enabled: true
+          events: ["RunInstances", "AuthorizeSecurityGroupIngress"]
+        vpc:
+          enabled: true
+          events: ["CreateRoute", "DeleteRoute"]
+
+  # Secrets watchers
+  secrets:
+    kubernetes:
+      enabled: true
+      namespaces: ["all"]
+    vault:
+      enabled: false  # Enable if using HashiCorp Vault
+    awsSecretsManager:
+      enabled: true
+      region: "us-east-1"
+
+# Responders configuration
+responders:
+  # Auto-fix settings
+  autoFix:
+    enabled: true  # Set to false initially, enable after tuning
+    dryRun: false  # Set to true for testing
+    maxRank: "D"  # Auto-fix up to D-rank
+    excludeNamespaces:
+      - kube-system
+      - kube-public
+      - gp-security
+
+  # Snapshot/rollback
+  snapshot:
+    enabled: true
+    storage: "s3://my-company-jsa-snapshots/"  # CHANGE ME
+    encryption: true
+    retention:
+      days: 30
+      maxCount: 1000
+
+  # JADE approval workflow
+  jadeApproval:
+    required: true  # Require JADE approval for C-rank
+    timeout: 300
+    fallback: "escalate"  # Options: escalate, block, allow
+
+  # Kubernetes responders
+  kubernetes:
+    podPatcher:
+      enabled: true
+      rank: "D"
+    deploymentUpdater:
+      enabled: true
+      rank: "D"
+    podIsolator:
+      enabled: true
+      rank: "C"
+    podKiller:
+      enabled: true
+      rank: "C"
+    namespaceIsolator:
+      enabled: true
+      rank: "B"
+
+  # Policy responders
+  policy:
+    networkPolicyGenerator:
+      enabled: true
+      rank: "D"
+    rbacScoper:
+      enabled: true
+      rank: "C"
+
+  # Cloud responders (AWS)
+  cloud:
+    aws:
+      iamPolicyFixer:
+        enabled: true
+        rank: "C"
+      s3BucketFixer:
+        enabled: true
+        rank: "D"
+      securityGroupFixer:
+        enabled: true
+        rank: "D"
+
+  # Secrets responders
+  secrets:
+    rotator:
+      enabled: true
+      rank: "D"
+
+  # Forensics
+  forensics:
+    logCapturer:
+      enabled: true
+      rank: "E"
+    snapshotCreator:
+      enabled: true
+      rank: "E"
+    evidencePreserver:
+      enabled: true
+      rank: "D"
+      storage: "s3://my-company-forensics/"  # CHANGE ME
+
+# Metrics and monitoring
+metrics:
+  prometheus:
+    enabled: true
+    port: 9100
+    path: /metrics
+    interval: 30s
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+
+# Alerts
+alerts:
+  slack:
+    enabled: true
+    webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"  # CHANGE ME
+    channels:
+      critical: "#security-critical"
+      high: "#security-alerts"
+      medium: "#security-log"
+      info: "#security-verbose"
+    mentions:
+      critical: "@security-oncall"
+      high: "@security-team"
+  pagerduty:
+    enabled: false
+    integrationKey: ""  # Optional: PagerDuty integration
+
+# Logging
+logging:
+  level: "info"  # Options: debug, info, warn, error
+  format: "json"
+  cloudWatch:
+    enabled: true
+    region: "us-east-1"
+    logGroup: "/aws/eks/jsa-infrasec"
+    streamPrefix: "jsa-"
+
+# Service account
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/jsa-infrasec"  # CHANGE ME
+  name: "jsa-infrasec"
+
+# RBAC
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "events", "secrets", "configmaps"]
+      verbs: ["get", "list", "watch", "patch", "delete"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "statefulsets", "daemonsets"]
+      verbs: ["get", "list", "watch", "patch", "update"]
+    - apiGroups: ["networking.k8s.io"]
+      resources: ["networkpolicies"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["roles", "rolebindings"]
+      verbs: ["get", "list", "watch", "create", "patch"]
+
+# Pod security
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+# Persistence (for local cache)
+persistence:
+  enabled: true
+  storageClass: "gp3"  # AWS EKS gp3 storage
+  size: 10Gi
+
+# Network policy
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      ports:
+      - protocol: TCP
+        port: 9100  # Prometheus metrics
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 443  # HTTPS (AWS APIs, Slack, etc.)
+      - protocol: TCP
+        port: 5000  # JADE, Falco

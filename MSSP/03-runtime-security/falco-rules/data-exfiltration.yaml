@@ -1,0 +1,173 @@
+# data-exfiltration.yaml
+# Detects data exfiltration attempts from containers.
+# Covers sensitive file access, data staging, DNS tunneling indicators,
+# exfil tool usage, and large outbound transfers.
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/data-exfiltration.yaml
+
+# ── Lists ───────────────────────────────────────────────────────────────────
+- list: sensitive_file_paths
+  items:
+    - /etc/shadow
+    - /etc/passwd
+    - /etc/gshadow
+    - /root/.ssh
+    - /root/.kube/config
+    - /root/.aws/credentials
+    - /root/.aws/config
+    - /root/.gcp/credentials.json
+    - /root/.azure/credentials
+    - /home
+
+- list: exfil_tools
+  items: [curl, wget, nc, ncat, socat, scp, rsync, rclone, ftp, sftp, telnet]
+
+- list: staging_directories
+  items: [/tmp, /dev/shm, /var/tmp, /run/shm]
+
+# ── Macros ──────────────────────────────────────────────────────────────────
+- macro: in_container
+  condition: >
+    container.id != host
+
+- macro: outbound_conn
+  condition: >
+    ((evt.type = connect and evt.dir = <) or
+     (evt.type in (sendto, sendmsg) and evt.dir = < and fd.l4proto != udp)) and
+    fd.typechar = 4
+
+# ── Rules ───────────────────────────────────────────────────────────────────
+
+# Detect: access to credential and secret files
+- rule: Sensitive Credential File Accessed in Container
+  desc: >
+    A process read a sensitive file containing credentials, SSH keys,
+    kubeconfig, cloud provider credentials, or .env files inside a
+    container. May indicate credential harvesting before exfiltration.
+  condition: >
+    open_read and
+    in_container and
+    (fd.name = /etc/shadow or
+     fd.name = /etc/gshadow or
+     fd.name startswith /root/.ssh/ or
+     fd.name = /root/.kube/config or
+     fd.name startswith /root/.aws/ or
+     fd.name startswith /root/.gcp/ or
+     fd.name startswith /root/.azure/ or
+     fd.name endswith /.env or
+     fd.name endswith /credentials or
+     fd.name endswith /credentials.json or
+     fd.name endswith /kubeconfig) and
+    not proc.name in (sshd, login, su, sudo, passwd, cron, crond, logrotate)
+  output: >
+    Sensitive credential file read in container
+    (file=%fd.name proc=%proc.name cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Exfiltration, MITRE_Credential_Access, T1552, container]
+
+# Detect: data staging in tmp directories before exfil
+- rule: Data Staged in Temp Directory
+  desc: >
+    An archive file (tar, zip, gz) was created in /tmp, /dev/shm, or
+    /var/tmp. Attackers stage stolen data in world-writable directories
+    before exfiltrating it.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name startswith /tmp/ or
+     fd.name startswith /dev/shm/ or
+     fd.name startswith /var/tmp/) and
+    (fd.name endswith .tar or
+     fd.name endswith .tar.gz or
+     fd.name endswith .tgz or
+     fd.name endswith .zip or
+     fd.name endswith .gz or
+     fd.name endswith .bz2 or
+     fd.name endswith .xz or
+     fd.name endswith .7z or
+     fd.name endswith .rar)
+  output: >
+    Archive file created in staging directory
+    (file=%fd.name proc=%proc.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Exfiltration, MITRE_Collection, T1074.001, T1048, container]
+
+# Detect: exfil tools connecting to external IPs
+- rule: Exfil Tool Connected to External IP
+  desc: >
+    A known data transfer tool (curl, wget, nc, socat, scp, rsync, rclone)
+    made an outbound connection to a non-RFC1918 IP address from inside a
+    container. Correlate with prior file reads for exfiltration confirmation.
+  condition: >
+    outbound_conn and
+    in_container and
+    proc.name in (exfil_tools) and
+    not fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8)
+  output: >
+    Exfil tool connected to external IP
+    (proc=%proc.name dest=%fd.sip:%fd.sport cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Exfiltration, T1048, container, network]
+
+# Detect: DNS tunneling indicators (long DNS queries)
+- rule: Possible DNS Tunneling from Container
+  desc: >
+    A process is making DNS requests with unusually long query names.
+    DNS tunneling encodes data in subdomain labels, producing queries
+    much longer than typical DNS lookups. Threshold is labels > 60 chars.
+  condition: >
+    evt.type in (sendto, sendmsg) and
+    in_container and
+    fd.l4proto = udp and
+    fd.sport = 53 and
+    (proc.name in (iodine, iodined, dnscat, dnscat2, dns2tcp) or
+     (fd.name glob "*.????????????????????????????????????????????????????????????????.*"))
+  output: >
+    Possible DNS tunneling from container
+    (proc=%proc.name fd=%fd.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Exfiltration, T1048.003, container, dns, network]
+
+# Detect: known DNS tunneling tools executed
+- rule: DNS Tunneling Tool Executed
+  desc: >
+    A known DNS tunneling tool (iodine, dnscat, dns2tcp) was executed
+    inside a container. These tools encode data in DNS queries to
+    exfiltrate data over port 53.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (iodine, iodined, dnscat, dnscat2, dns2tcp, dns2tcpc, dns2tcpd)
+  output: >
+    DNS tunneling tool executed in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Exfiltration, T1048.003, container, dns]
+
+# Detect: bulk read of /etc directory (password file harvesting)
+- rule: Bulk Sensitive File Enumeration
+  desc: >
+    A process is reading multiple sensitive files in quick succession.
+    Specifically, reading /etc/passwd followed by /etc/shadow indicates
+    credential harvesting for offline cracking or exfiltration.
+  condition: >
+    open_read and
+    in_container and
+    fd.name = /etc/shadow and
+    not proc.name in (login, su, sudo, passwd, sshd, cron, crond, pam, nscd,
+                      sssd, nslcd, getent)
+  output: >
+    Shadow file read by non-auth process
+    (file=%fd.name proc=%proc.name cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Exfiltration, MITRE_Credential_Access, T1003.008, T1048, container]

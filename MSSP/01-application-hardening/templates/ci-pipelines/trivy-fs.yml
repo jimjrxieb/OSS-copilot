@@ -1,0 +1,82 @@
+name: Trivy Dependency Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  trivy:
+    name: Dependency CVE Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@84384bd6e777ef152729993b8145ea352e9dd3ef # v0.17.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          ignore-unfixed: false
+          trivyignores: '.trivyignore'
+          vuln-type: 'os,library'
+          exit-code: '1'
+        env:
+          TRIVY_CONFIG: trivy.yaml
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy-fs'
+
+      - name: Generate SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@84384bd6e777ef152729993b8145ea352e9dd3ef # v0.17.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'cyclonedx'
+          output: 'sbom.json'
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+      - name: Comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync('trivy-results.sarif', 'utf8'));
+            const results = sarif.runs[0].results || [];
+
+            const critical = results.filter(r => r.properties && r.properties.severity === 'CRITICAL').length;
+            const high = results.filter(r => r.properties && r.properties.severity === 'HIGH').length;
+            const medium = results.filter(r => r.properties && r.properties.severity === 'MEDIUM').length;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🔍 **Trivy found ${results.length} vulnerability(ies)**\n\n- Critical: ${critical}\n- High: ${high}\n- Medium: ${medium}\n\nPlease update vulnerable dependencies.`
+            });

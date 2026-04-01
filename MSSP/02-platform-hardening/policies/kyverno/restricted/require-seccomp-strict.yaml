@@ -1,0 +1,44 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-seccomp-strict
+  annotations:
+    policies.kyverno.io/title: Require Seccomp Profile
+    policies.kyverno.io/category: Pod Security Standards (Restricted)
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Seccomp (secure computing mode) restricts the syscalls a container can make.
+      This policy requires pods to have a seccomp profile set to RuntimeDefault or Localhost.
+      CKS Exam Domain: Monitoring, Logging and Runtime Security (20%)
+      CIS Benchmark: 5.7.2
+    gp-copilot/category: "restricted"
+    gp-copilot/standard: "CIS-5.7.2"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-seccomp-strict
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      validate:
+        message: >-
+          Pods must have a seccomp profile set. Use RuntimeDefault or Localhost.
+          Add to pod spec: securityContext.seccompProfile.type: RuntimeDefault
+        pattern:
+          spec:
+            securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"

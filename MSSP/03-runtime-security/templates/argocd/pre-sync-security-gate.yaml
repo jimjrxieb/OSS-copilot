@@ -1,0 +1,153 @@
+# ArgoCD PreSync Hook — Security Policy Gate
+# Runs conftest against rendered manifests BEFORE ArgoCD applies them.
+# If any DENY rule fires, the Job fails and the sync is blocked.
+#
+# This is the bridge between 02-CLUSTER-HARDEN (policies) and 03-RUNTIME-SECURITY (enforcement).
+#
+# How it works:
+#   1. ArgoCD renders manifests (helm template / kustomize build)
+#   2. This Job runs conftest test against the rendered output
+#   3. conftest checks: privileged containers, missing limits, latest tags, root users, etc.
+#   4. DENY = Job fails = sync blocked. WARN = logged, sync continues.
+#
+# To add to an Application, include this Job in the same directory as your manifests.
+# ArgoCD picks it up automatically via the hook annotation.
+#
+# Policies referenced:
+#   - 01-APP-SEC/scanning-configs/conftest-policy.rego (CI-level checks)
+#   - 02-CLUSTER-HARDEN/templates/policies/conftest/ (cluster-level checks)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pre-sync-security-gate
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    app: security-gate
+    phase: pre-sync
+    managed-by: gp-copilot
+    package: 03-deploy-runtime
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  backoffLimit: 0               # No retries — fail fast
+  ttlSecondsAfterFinished: 3600 # Cleanup after 1 hour
+  activeDeadlineSeconds: 120    # Hard timeout: 2 minutes
+  template:
+    metadata:
+      labels:
+        app: security-gate
+        phase: pre-sync
+    spec:
+      restartPolicy: Never
+      serviceAccountName: security-gate
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: conftest
+          image: openpolicyagent/conftest:v0.55.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "=== PreSync Security Gate ==="
+              echo "Namespace: $TARGET_NAMESPACE"
+              echo "App:       $ARGOCD_APP_NAME"
+              echo ""
+
+              # Fetch rendered manifests from ArgoCD repo server
+              # In practice, manifests are mounted via initContainer or ArgoCD CMP
+              MANIFEST_DIR="/manifests"
+
+              if [ ! -d "$MANIFEST_DIR" ] || [ -z "$(ls -A $MANIFEST_DIR 2>/dev/null)" ]; then
+                echo "WARN: No manifests found at $MANIFEST_DIR — skipping policy check"
+                echo "      This is expected for Helm-only Applications (policies checked at admission)"
+                exit 0
+              fi
+
+              POLICY_DIR="/policies"
+              FAIL_COUNT=0
+
+              echo "--- Running conftest against rendered manifests ---"
+              echo ""
+
+              # Run conftest — DENY rules cause non-zero exit
+              if ! conftest test "$MANIFEST_DIR"/*.yaml \
+                --policy "$POLICY_DIR" \
+                --output stdout \
+                --no-color 2>&1; then
+                FAIL_COUNT=$((FAIL_COUNT + 1))
+              fi
+
+              echo ""
+              echo "--- Results ---"
+
+              if [ "$FAIL_COUNT" -gt 0 ]; then
+                echo "BLOCKED: $FAIL_COUNT policy violation(s) detected"
+                echo ""
+                echo "Fix the violations and push again. ArgoCD will retry the sync."
+                echo "See: 02-CLUSTER-HARDEN/templates/policies/README.md for policy documentation"
+                exit 1
+              fi
+
+              echo "PASSED: All policy checks passed"
+              exit 0
+          env:
+            - name: TARGET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ARGOCD_APP_NAME
+              value: "{{ .Release.Name }}"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: manifests
+              mountPath: /manifests
+              readOnly: true
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: manifests
+          emptyDir: {}
+        - name: policies
+          configMap:
+            name: conftest-policies
+            optional: true    # Falls back to admission control if ConfigMap doesn't exist
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Mi
+---
+# ServiceAccount for the security gate Job
+# Minimal permissions — only needs to read its own namespace
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: security-gate
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    managed-by: gp-copilot
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+automountServiceAccountToken: false

@@ -1,0 +1,43 @@
+# =============================================================================
+# Ghost Protocol -- Kyverno PolicyException for Karpenter
+# Karpenter controller needs elevated privileges for node management
+#
+# Without this, Kyverno will block Karpenter pods if enforce mode is active
+# for policies like require-nonroot, require-drop-all, require-resource-limits
+# =============================================================================
+apiVersion: kyverno.io/v2beta1
+kind: PolicyException
+metadata:
+  name: karpenter-exception
+  namespace: kube-system
+  annotations:
+    gp-copilot/category: "custom"
+    gp-copilot/standard: "GP-Copilot"
+    gp-copilot/value-add: "true"
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    exception-reason: node-management
+spec:
+  exceptions:
+    - policyName: require-run-as-nonroot
+      ruleNames:
+        - require-run-as-nonroot
+    - policyName: require-drop-all-capabilities
+      ruleNames:
+        - require-drop-all
+    - policyName: require-resource-limits
+      ruleNames:
+        - require-resource-limits
+    - policyName: require-readonly-rootfs
+      ruleNames:
+        - require-readonly-rootfs
+  match:
+    any:
+      - resources:
+          kinds:
+            - Pod
+          namespaces:
+            - kube-system
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: karpenter

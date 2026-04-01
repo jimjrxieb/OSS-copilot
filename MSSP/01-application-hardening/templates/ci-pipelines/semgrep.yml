@@ -1,0 +1,73 @@
+name: Semgrep SAST
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  semgrep:
+    name: SAST Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
+        with:
+          config: >-
+            p/security-audit
+            p/owasp-top-ten
+            p/cwe-top-25
+            p/secrets
+            p/kubernetes
+            p/dockerfile
+            semgrep.yaml
+        env:
+          SEMGREP_RULES: semgrep.yaml
+          SEMGREP_TIMEOUT: 30
+          SEMGREP_MAX_MEMORY: 5000
+
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Comment on PR with findings summary
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const sarif = JSON.parse(fs.readFileSync('semgrep.sarif', 'utf8'));
+            const results = sarif.runs[0].results || [];
+
+            if (results.length === 0) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: '✅ **Semgrep SAST**: No security issues found!'
+              });
+            } else {
+              const errors = results.filter(r => r.level === 'error').length;
+              const warnings = results.filter(r => r.level === 'warning').length;
+
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `⚠️ **Semgrep SAST found ${results.length} issue(s)**\n\n- Errors: ${errors}\n- Warnings: ${warnings}\n\nSee workflow run for details.`
+              });
+            }

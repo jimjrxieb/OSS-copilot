@@ -1,0 +1,226 @@
+# =============================================================================
+# GP-COPILOT — SOURCE CODE SECURITY PIPELINE
+# =============================================================================
+#
+# Scans source code, dependencies, secrets, and Dockerfiles.
+# This is the "Code" C — everything that lives in a repo.
+#
+# Scanners: Gitleaks, Semgrep, Bandit, Trivy-fs, Grype, Hadolint
+# Matches: run-src-scanners.sh
+#
+# Usage:
+#   Copy to .github/workflows/security-src.yml in your repository
+#
+# =============================================================================
+
+name: gp-copilot Source Security
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  schedule:
+    - cron: '0 2 * * *'  # nightly at 2am UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-src-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SEVERITY_THRESHOLD: HIGH
+
+jobs:
+  # ===========================================================================
+  # SECRET DETECTION
+  # ===========================================================================
+  secrets-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --verbose --redact
+
+      - name: Upload Gitleaks Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: results.sarif
+          retention-days: 30
+
+  # ===========================================================================
+  # SAST (Static Application Security Testing)
+  # ===========================================================================
+  sast-scan:
+    name: SAST Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+            p/cwe-top-25
+            p/python
+            p/javascript
+            p/golang
+            p/dockerfile
+            p/github-actions
+          generateSarif: true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Bandit (Python)
+        if: hashFiles('**/*.py') != ''
+        run: |
+          pip install "bandit==1.8.6"
+          bandit -r . -f sarif -o bandit.sarif --severity-level medium || true
+
+      - name: Upload Bandit SARIF
+        if: hashFiles('bandit.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  # ===========================================================================
+  # DEPENDENCY SCANNING
+  # ===========================================================================
+  dependency-scan:
+    name: Dependency Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy Dependency Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-deps.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'library'
+
+      - name: Grype Dependency Scan
+        uses: anchore/scan-action@v4
+        with:
+          path: '.'
+          fail-build: false
+          severity-cutoff: high
+          output-format: sarif
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-deps
+
+      - name: Upload Grype SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: grype
+
+  # ===========================================================================
+  # CONTAINER SCANNING (Dockerfile lint + image scan)
+  # ===========================================================================
+  container-scan:
+    name: Container Scanning
+    runs-on: ubuntu-latest
+    if: hashFiles('**/Dockerfile') != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Hadolint Dockerfile Lint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          format: sarif
+          output-file: hadolint.sarif
+          failure-threshold: warning
+
+      - name: Build Container Image
+        run: |
+          if [ -f Dockerfile ]; then
+            docker build -t scan-target:${{ github.sha }} .
+          fi
+
+      - name: Trivy Container Scan
+        if: hashFiles('Dockerfile') != ''
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'scan-target:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-container.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Hadolint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint.sarif
+          category: hadolint
+
+      - name: Upload Trivy Container SARIF
+        if: always() && hashFiles('trivy-container.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-container.sarif
+          category: trivy-container
+
+  # ===========================================================================
+  # AGGREGATE RESULTS
+  # ===========================================================================
+  src-summary:
+    name: Source Security Summary
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast-scan, dependency-scan, container-scan]
+    if: always()
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# GP-Copilot Source Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scanner | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Gitleaks (Secrets) | ${{ needs.secrets-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST (Semgrep/Bandit) | ${{ needs.sast-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependencies (Trivy/Grype) | ${{ needs.dependency-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Containers (Hadolint/Trivy) | ${{ needs.container-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Powered by GP-Copilot — Source Security Pipeline*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for Critical Failures
+        if: |
+          needs.secrets-scan.result == 'failure' ||
+          needs.sast-scan.result == 'failure'
+        run: |
+          echo "::error::Critical source security scan failed!"
+          exit 1

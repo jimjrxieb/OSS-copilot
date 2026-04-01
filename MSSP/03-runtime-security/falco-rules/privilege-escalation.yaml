@@ -1,0 +1,172 @@
+# privilege-escalation.yaml
+# Detects privilege escalation attempts inside containers.
+# Covers setuid/setgid modifications, sudo abuse, kernel module loading,
+# capability manipulation, hostPath exploits, nsenter escapes, and
+# mount namespace manipulation.
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/privilege-escalation.yaml
+
+# ── Lists ───────────────────────────────────────────────────────────────────
+- list: capability_tools
+  items: [capsh, setcap, getcap, getpcaps]
+
+- list: kernel_module_tools
+  items: [insmod, modprobe, rmmod, depmod]
+
+- list: mount_tools
+  items: [mount, umount, nsenter, unshare, chroot, pivot_root]
+
+# ── Macros ──────────────────────────────────────────────────────────────────
+- macro: in_container
+  condition: >
+    container.id != host
+
+# ── Rules ───────────────────────────────────────────────────────────────────
+
+# Detect: setuid/setgid bit set on file
+- rule: Setuid or Setgid Bit Set in Container
+  desc: >
+    The setuid or setgid bit was set on a file inside a container using
+    chmod. This is a classic privilege escalation technique that allows
+    processes to run with elevated permissions.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name = chmod and
+    (proc.cmdline contains "+s" or
+     proc.cmdline contains "u+s" or
+     proc.cmdline contains "g+s" or
+     proc.cmdline contains "4755" or
+     proc.cmdline contains "2755" or
+     proc.cmdline contains "6755" or
+     proc.cmdline contains "4775" or
+     proc.cmdline contains "4777")
+  output: >
+    Setuid/setgid bit set on file in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1548.001, container]
+
+# Detect: sudo or su executed in container
+- rule: Sudo or Su Executed in Container
+  desc: >
+    sudo or su was executed inside a container. Production containers
+    should not have sudo installed. Its presence and use indicates
+    either misconfiguration or privilege escalation attempts.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (sudo, su) and
+    not proc.pname in (cron, crond, sshd)
+  output: >
+    Sudo/su executed in container
+    (proc=%proc.name cmdline=%proc.cmdline parent=%proc.pname
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Privilege_Escalation, T1548.003, container]
+
+# Detect: kernel module loading from container
+- rule: Kernel Module Loaded from Container
+  desc: >
+    A kernel module tool (insmod, modprobe) was executed inside a
+    container. Loading kernel modules from a container can compromise
+    the entire host and all co-located containers.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (kernel_module_tools)
+  output: >
+    Kernel module tool executed in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1611, T1547.006, container]
+
+# Detect: Linux capability manipulation
+- rule: Capability Modification in Container
+  desc: >
+    A capability manipulation tool (capsh, setcap, getcap) was executed
+    inside a container. Attackers use setcap to grant elevated capabilities
+    to binaries without requiring setuid.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (capability_tools)
+  output: >
+    Capability tool executed in container
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Privilege_Escalation, T1548, container]
+
+# Detect: nsenter used to escape container namespace
+- rule: Container Escape via nsenter
+  desc: >
+    nsenter was executed inside a container to enter host namespaces.
+    This is a well-known container escape technique that requires
+    privileged or specific capabilities (CAP_SYS_ADMIN).
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name = nsenter and
+    (proc.cmdline contains "--target" or
+     proc.cmdline contains "-t" or
+     proc.cmdline contains "--mount" or
+     proc.cmdline contains "--pid" or
+     proc.cmdline contains "--net")
+  output: >
+    nsenter container escape attempt
+    (cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1611, container]
+
+# Detect: writable hostPath mount exploit
+- rule: Write to Sensitive Host Path from Container
+  desc: >
+    A process inside a container wrote to a sensitive host filesystem
+    path via a hostPath volume mount. Writable hostPath mounts are a
+    major security risk that can lead to host compromise.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name startswith /host/etc/ or
+     fd.name startswith /host/root/ or
+     fd.name startswith /host/var/run/docker.sock or
+     fd.name startswith /host/var/run/containerd/ or
+     fd.name startswith /host/usr/bin/ or
+     fd.name startswith /host/usr/sbin/ or
+     fd.name startswith /host/lib/modules/)
+  output: >
+    Write to sensitive host path from container
+    (file=%fd.name proc=%proc.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Privilege_Escalation, T1611, container]
+
+# Detect: mount namespace manipulation or chroot escape
+- rule: Mount Namespace Manipulation in Container
+  desc: >
+    unshare, chroot, or pivot_root was executed inside a container.
+    These tools can be used to manipulate mount namespaces, escape
+    chroot jails, or break out of container isolation.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (unshare, chroot, pivot_root) and
+    not proc.pname in (containerd-shim, runc, crun)
+  output: >
+    Mount namespace manipulation in container
+    (proc=%proc.name cmdline=%proc.cmdline parent=%proc.pname
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Privilege_Escalation, T1611, container]

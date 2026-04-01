@@ -1,0 +1,157 @@
+# GP-Copilot RBAC Template: Documented Admin
+# Full admin access with explicit resource listing (no wildcards).
+# Cannot modify audit policies or admission webhooks.
+# All actions are auditable via K8s audit logs.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: documented-admin
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    gp-copilot/template: rbac-admin
+  annotations:
+    gp-copilot/value-add: "auditable admin role with explicit permissions — replaces cluster-admin wildcard"
+    gp-copilot/package: "02-CLUSTER-HARDEN"
+    gp-copilot/audit-required: "true"
+    gp-copilot/justification: "Required for cluster administration. All usage logged and reviewed."
+rules:
+  # Core resources — full CRUD
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/exec
+      - pods/portforward
+      - services
+      - configmaps
+      - secrets
+      - events
+      - endpoints
+      - namespaces
+      - nodes
+      - persistentvolumes
+      - persistentvolumeclaims
+      - serviceaccounts
+      - resourcequotas
+      - limitranges
+      - replicationcontrollers
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Workload resources — full CRUD
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+      - controllerrevisions
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Networking — full CRUD
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+      - ingressclasses
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gatewayclasses
+      - gateways
+      - httproutes
+      - referencegrants
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Storage — full CRUD
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - volumeattachments
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # RBAC — full CRUD (except kube-system, enforced by convention)
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+      - clusterroles
+      - clusterrolebindings
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Policy — full CRUD
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Kyverno — full CRUD
+  - apiGroups: ["kyverno.io"]
+    resources:
+      - clusterpolicies
+      - policies
+      - policyreports
+      - clusterpolicyreports
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Gatekeeper — full CRUD
+  - apiGroups: ["constraints.gatekeeper.sh"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["templates.gatekeeper.sh"]
+    resources:
+      - constrainttemplates
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # ArgoCD — full CRUD
+  - apiGroups: ["argoproj.io"]
+    resources:
+      - applications
+      - applicationsets
+      - appprojects
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # CRDs — read only (create/update is architecture-level)
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources:
+      - customresourcedefinitions
+    verbs: ["get", "list", "watch"]
+
+  # Admission webhooks — READ ONLY (never modify via RBAC)
+  # Modifying these can bypass all security controls.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources:
+      - validatingwebhookconfigurations
+      - mutatingwebhookconfigurations
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: documented-admin-binding
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    gp-copilot/template: rbac-admin
+  annotations:
+    gp-copilot/value-add: "auditable admin binding — every subject documented with justification"
+    gp-copilot/package: "02-CLUSTER-HARDEN"
+    gp-copilot/audit-required: "true"
+    gp-copilot/justification: "Cluster admin access for infrastructure management. Review quarterly."
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: documented-admin
+subjects:
+  # Add subjects with individual justification annotations on the binding
+  - kind: User
+    name: ADMIN_USER
+    apiGroup: rbac.authorization.k8s.io

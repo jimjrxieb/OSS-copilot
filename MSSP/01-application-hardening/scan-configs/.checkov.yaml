@@ -1,0 +1,110 @@
+# Checkov Configuration
+# Infrastructure as Code security scanner
+# Docs: https://www.checkov.io/
+
+# Frameworks to scan
+framework:
+  - terraform
+  - kubernetes
+  - dockerfile
+  - cloudformation
+  - arm
+  - serverless
+  - helm
+  - kustomize
+  - github_actions
+  - gitlab_ci
+  - circleci_pipelines
+
+# Directories to scan
+directory:
+  - .
+
+# Files to scan (override directory scan)
+# file:
+#   - main.tf
+#   - k8s/deployment.yaml
+
+# Output formats
+output:
+  - cli
+  - json
+  - sarif
+  - junitxml
+
+# Output file paths
+# output-file-path: ./checkov-results.json
+# sarif-output-file-path: ./checkov-results.sarif
+
+# Severity threshold (INFO, LOW, MEDIUM, HIGH, CRITICAL)
+# compact: true
+# quiet: true
+
+# Skip specific checks
+skip-check:
+  # Example: Skip checks that don't apply to your environment
+  # - CKV_AWS_23      # S3 bucket logging (if not required)
+  # - CKV_K8S_8       # Liveness probe (if using custom health checks)
+  # - CKV_DOCKER_2    # HEALTHCHECK instruction (if using orchestrator health)
+
+# Run only specific checks
+# check:
+#   - CKV_AWS_*
+#   - CKV_K8S_*
+
+# Skip specific resources
+# skip-resources-without-violations: true
+
+# External checks directory (custom policies)
+# external-checks-dir:
+#   - ./custom-policies
+
+# External checks git repositories
+# external-checks-git:
+#   - https://github.com/your-org/custom-checkov-policies.git
+
+# Baseline file (suppress existing findings)
+# baseline: .checkov.baseline
+
+# Download external modules for Terraform
+download-external-modules: true
+
+# Evaluate variables for Terraform
+evaluate-variables: true
+
+# Compact output (one line per finding)
+compact: false
+
+# Suppress console output
+quiet: false
+
+# No guide links in output
+# no-guide: false  # not supported in all checkov versions
+
+# Skip download of external modules
+# skip-download: false
+
+# Soft fail (exit code 0 even with findings)
+soft-fail: false
+
+# Hard fail on specific check types
+# hard-fail-on:
+#   - CKV_AWS_*
+#   - CKV_K8S_*
+
+# Policy metadata filters
+# policy-metadata-filter: "severity=HIGH"
+
+# CKV2 checks (complex graph-based checks)
+# enable-ckv2-checks: true  # not supported in all checkov versions
+
+# Skip CKV2 checks
+# skip-ckv2-check:
+#   - CKV2_AWS_1
+
+# Prisma Cloud integration
+# prisma-api-url: https://api.prismacloud.io
+# bc-api-key: YOUR_API_KEY
+
+# SBOM integration
+# skip-sbom-check: false

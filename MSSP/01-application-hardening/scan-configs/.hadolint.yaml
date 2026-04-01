@@ -1,0 +1,59 @@
+# Hadolint Configuration
+# Dockerfile linter for security and best practices
+# Docs: https://github.com/hadolint/hadolint
+
+# Ignore specific rules (by rule ID)
+ignored:
+  # - DL3000  # Example: Ignore specific rule
+
+# Trusted registries (allow these without warning)
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+  - gcr.io
+  - registry.k8s.io
+  - quay.io
+
+# Override severity levels
+override:
+  error:
+    - DL3001  # Using :latest tag
+    - DL3002  # Missing USER instruction
+    - DL3003  # Using cd instead of WORKDIR
+    - DL3007  # Using :latest tag (duplicate for emphasis)
+    - DL3020  # Using COPY with more than 2 arguments
+  warning:
+    - DL3008  # Pin versions in apt-get install
+    - DL3015  # Avoid additional packages with yum
+    - DL3018  # Pin versions in apk add
+    - DL3028  # Pin versions in gem install
+  info:
+    - DL3006  # Always tag the version of an image explicitly
+    - DL3009  # Delete apt-get lists after installing
+    - DL3013  # Pin versions in pip install
+
+# Inline ignore configuration
+# (controls whether inline comments like `# hadolint ignore=DL3006` work)
+inline-ignore: true
+
+# Strict labels (fail on missing labels)
+strict-labels: false
+
+# Dockerfile-specific settings
+label-schema:
+  # author: "Dockerfile maintainer email"
+  # version: "Dockerfile version"
+
+# Failure threshold
+# Options: error, warning, info, style, ignore, none
+failure-threshold: warning
+
+# No fail (exit with 0 even if issues found)
+no-fail: false
+
+# No color in output
+no-color: false
+
+# Format output
+# Options: tty, json, checkstyle, codeclimate, gitlab_codeclimate, gnu, codacy, sonarqube, sarif
+format: tty

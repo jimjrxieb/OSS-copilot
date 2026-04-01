@@ -1,0 +1,176 @@
+# persistence.yaml
+# Detects persistence mechanisms established inside containers.
+# Covers cron job creation, systemd service installation, SSH key injection,
+# shell profile modification, and binary replacement in standard paths.
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/persistence.yaml
+
+# ── Lists ───────────────────────────────────────────────────────────────────
+- list: shell_profile_files
+  items:
+    - .bashrc
+    - .bash_profile
+    - .profile
+    - .zshrc
+    - .zprofile
+    - .cshrc
+    - .login
+
+- list: standard_bin_paths
+  items:
+    - /usr/bin
+    - /usr/sbin
+    - /usr/local/bin
+    - /usr/local/sbin
+    - /bin
+    - /sbin
+
+# ── Macros ──────────────────────────────────────────────────────────────────
+- macro: in_container
+  condition: >
+    container.id != host
+
+# ── Rules ───────────────────────────────────────────────────────────────────
+
+# Detect: cron job created inside a container
+- rule: Cron Job Created in Container
+  desc: >
+    A file was written to a cron directory or crontab was edited inside a
+    container. Containers should not use local cron — use Kubernetes
+    CronJob resources instead. Indicates persistence establishment.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name startswith /etc/cron.d/ or
+     fd.name startswith /etc/cron.daily/ or
+     fd.name startswith /etc/cron.hourly/ or
+     fd.name startswith /etc/cron.weekly/ or
+     fd.name startswith /etc/cron.monthly/ or
+     fd.name = /etc/crontab or
+     fd.name startswith /var/spool/cron/)
+  output: >
+    Cron job created in container
+    (file=%fd.name proc=%proc.name cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1053.003, container]
+
+# Detect: systemd service unit created inside a container
+- rule: Systemd Service Created in Container
+  desc: >
+    A systemd service unit file was written inside a container. This is
+    not normal for containerized workloads and indicates an attacker
+    installing a persistent service.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name startswith /etc/systemd/system/ or
+     fd.name startswith /usr/lib/systemd/system/ or
+     fd.name startswith /lib/systemd/system/ or
+     fd.name startswith /run/systemd/system/) and
+    (fd.name endswith .service or
+     fd.name endswith .timer or
+     fd.name endswith .socket)
+  output: >
+    Systemd service unit created in container
+    (file=%fd.name proc=%proc.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1543.002, container]
+
+# Detect: SSH authorized_keys modified
+- rule: SSH Authorized Keys Modified in Container
+  desc: >
+    An SSH authorized_keys file was written inside a container. Attackers
+    inject their public key to maintain persistent SSH access even if
+    credentials are rotated.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name endswith /authorized_keys or
+     fd.name endswith /authorized_keys2) and
+    not proc.name in (sshd, ssh-keygen)
+  output: >
+    SSH authorized_keys modified in container
+    (file=%fd.name proc=%proc.name cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Persistence, T1098.004, container]
+
+# Detect: shell profile modified for persistence
+- rule: Shell Profile Modified in Container
+  desc: >
+    A shell profile file (.bashrc, .profile, .bash_profile, .zshrc) was
+    modified inside a container. Attackers add commands to shell profiles
+    so they execute on every new shell session.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name endswith /.bashrc or
+     fd.name endswith /.bash_profile or
+     fd.name endswith /.profile or
+     fd.name endswith /.zshrc or
+     fd.name endswith /.zprofile or
+     fd.name endswith /.cshrc or
+     fd.name endswith /.login or
+     fd.name = /etc/profile or
+     fd.name startswith /etc/profile.d/) and
+    not proc.name in (bash, sh, dash, zsh, dpkg, rpm, yum, apt, apt-get)
+  output: >
+    Shell profile modified in container
+    (file=%fd.name proc=%proc.name cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1546.004, container]
+
+# Detect: binary replaced or created in standard bin paths
+- rule: Binary Modified in Standard Path
+  desc: >
+    A file was written to a standard binary directory (/usr/bin, /usr/sbin,
+    /bin, /sbin, /usr/local/bin). In immutable container images, these
+    paths should never be modified at runtime. Indicates backdoor
+    installation or binary replacement (trojanizing).
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name startswith /usr/bin/ or
+     fd.name startswith /usr/sbin/ or
+     fd.name startswith /usr/local/bin/ or
+     fd.name startswith /usr/local/sbin/ or
+     fd.name startswith /bin/ or
+     fd.name startswith /sbin/) and
+    not proc.name in (dpkg, rpm, yum, dnf, apt, apt-get, apk, pip, pip3,
+                       npm, gem, cargo, go, rustup)
+  output: >
+    Binary written to standard path in container
+    (file=%fd.name proc=%proc.name cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Persistence, T1574.010, container]
+
+# Detect: init system (crontab command) executed
+- rule: Crontab Command Executed in Container
+  desc: >
+    The crontab command was executed inside a container to install or
+    modify scheduled tasks. This is a direct persistence mechanism.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name = crontab and
+    (proc.cmdline contains "-e" or
+     proc.cmdline contains "-l" or
+     proc.cmdline contains "-r" or
+     proc.cmdline contains "-")
+  output: >
+    Crontab command executed in container
+    (cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: HIGH
+  tags: [MITRE_Persistence, T1053.003, container]

@@ -1,127 +1,202 @@
 # OSS-Copilot
 
-Enterprise security tools like Prisma Cloud, Wiz, and Splunk
-are excellent. They're also expensive, and they're most valuable
-when your team isn't drowning in LOW and MEDIUM findings.
+Open source security for dev and staging. Enterprise tools take over in production.
 
-This repo gives you the open source playbooks to handle that
-layer yourself — the scanning, the hardening, the compliance
-evidence. Run these first. Let the enterprise tools focus on
-what only they can catch.
+Five packages. 49 playbooks. 250 files. Everything a junior DevOps engineer needs to harden an application from source code through cloud deployment — using free tools that cover 80-90% of what enterprise platforms charge for.
 
-Five layers. One methodology.
-**Understand → Secure → Optimize → Outcome.**
-
-No agents. No auto-fix. Just scanning, findings, and honest
-guidance on when open source is enough and when it isn't.
+Run these first. Fix the noise. Then the enterprise tools (Checkmarx, Prisma Cloud, Wiz, Sysdig, Drata) focus on signal instead of drowning in LOW and MEDIUM findings.
 
 ---
 
-## MSSP — Open Source Managed Security
+## MSSP — The Framework
 
-Everything lives in [`MSSP/`](MSSP/) — the open source equivalent of what
-managed security service providers (GuidePoint, Deloitte, PwC, KPMG) deploy
-with enterprise tooling costing $200K-$2M/yr.
+Everything lives in [`MSSP/`](MSSP/). Five packages, run in order:
 
-Same methodology. Same coverage areas. Open source tools.
+| # | Package | What It Covers | Playbooks | Time |
+|---|---------|---------------|-----------|------|
+| 01 | [Application Hardening](MSSP/01-application-hardening/playbooks/) | Scan + fix source code, deps, Dockerfiles, IaC. CI gates. Deploy to dev. | 11 | ~2 hrs |
+| 02 | [Platform Hardening](MSSP/02-platform-hardening/playbooks/) | Cluster audit, Kyverno, RBAC, NetworkPolicy, secrets. Deploy to staging. | 10 | ~3 hrs |
+| 03 | [Runtime Security](MSSP/03-runtime-security/playbooks/) | Falco, monitoring, logging. ArgoCD deploy. Tune, SIEM, incident response. | 10 | ~2.5 hrs |
+| 04 | [Cloud Security](MSSP/04-cloud-security/playbooks/) | VPC, IAM, encryption, EKS, detection services, ECR pipeline. AWS default, Azure/GCP noted. | 9 | ~2 hrs |
+| 05 | [Compliance Ready](MSSP/05-compliance-ready/playbooks/) | NIST 800-53 gap assessment, control implementation, evidence package. | 9 | ~3 hrs |
 
-### The 5 C's
-
-| Layer | What MSSPs Deploy | What You Run (Free) | Directory |
-|-------|-------------------|---------------------|-----------|
-| **Code** | Checkmarx, Snyk Code, GitGuardian | Semgrep, Bandit, Gitleaks, Trivy | [`MSSP/01-code/`](MSSP/01-code/) |
-| **Cluster** | Wiz K8s, Styra DAS, Teleport | kube-bench, Kubescape, Polaris, Kyverno | [`MSSP/02-cluster/`](MSSP/02-cluster/) |
-| **Container** | Prisma Cloud CWPP, Sysdig Secure | Trivy, Hadolint, Falco | [`MSSP/03-container/`](MSSP/03-container/) |
-| **Cloud** | Wiz CSPM, Prisma Cloud | Prowler, Checkov, tfsec | [`MSSP/04-cloud/`](MSSP/04-cloud/) |
-| **Compliance** | Drata, Vanta | OPA, manual mapping, evidence scripts | [`MSSP/05-compliance/`](MSSP/05-compliance/) |
-
-Each directory has:
-- **Playbooks** — step-by-step guides a beginner can follow
-- **Shell scripts** — run the scanners, copy-paste, works today
-- **Enterprise comparison** — what the Big 4 use, what OSS covers, where the gap is
-- **Honest guidance** — when to buy the enterprise tool and when open source is enough
+**Full pass: ~12 hours.** Manual equivalent: 8-16 weeks.
 
 ---
 
-## How to Use This
+## Quick Start
 
 ```bash
-cd MSSP
+# 1. Clone your project into a slot
+cd Target-Projects/slot-1/
+git clone <your-project-url>
 
-# Pick a layer. Follow the playbooks.
-cd 01-code && cat playbooks/00-understand-your-repo.md
+# 2. Set your paths (every playbook uses these)
+export TARGET_DIR=../../Target-Projects/slot-1/<your-project>
+export OUTPUT_DIR=../../Target-Projects/slot-1/mssp-outputs
 
-# Or just scan something right now
-cd 01-code && ./scan-code.sh /path/to/your/project
-cd 02-cluster && ./scan-cis.sh
-cd 03-container && ./scan-images.sh nginx:1.25
-cd 04-cloud && ./scan-aws.sh
-cd 05-compliance && ./map-nist.sh
+# 3. Start with package 01, playbook 00
+cd ../../MSSP/01-application-hardening/playbooks/
+# Open 00-understand-your-app.md and follow the steps
 ```
+
+Scan results go to `Target-Projects/slot-1/mssp-outputs/`.
+
+---
+
+## The Open Source Stack
+
+| Tool | What It Does | Replaces in Prod |
+|------|-------------|-----------------|
+| **Semgrep** | SAST (multi-language) | Checkmarx, SonarQube |
+| **Bandit** | Python SAST | Fortify |
+| **Gitleaks** | Secret detection | GitGuardian |
+| **Trivy** | CVE scanning (deps + images) | Snyk, Mend |
+| **Grype** | CVE cross-check | WhiteSource |
+| **Hadolint** | Dockerfile linting | Aqua Scanner |
+| **Checkov** | IaC scanning (Terraform, CF, K8s) | Prisma Cloud, Bridgecrew |
+| **Kubescape** | K8s hardening (NSA/CISA) | Wiz, ARMO |
+| **Polaris** | K8s best practices | Fairwinds |
+| **Conftest** | OPA policy checks | Styra DAS |
+| **Kyverno** | K8s admission control | Nirmata, Styra |
+| **Falco** | Runtime syscall monitoring | Sysdig Secure, CrowdStrike |
+| **Prowler** | Cloud CIS benchmarks | Prisma Cloud, Wiz |
+| **Cosign** | Image signing | Sigstore |
+
+Scripts skip whatever isn't installed and tell you how to install it.
+
+---
+
+## The Workflow
+
+### Phase 1 — Application Hardening
+
+Scan source code and infrastructure. Auto-fix. Add CI gates. Deploy to dev.
+
+```
+00 Understand your app           05 Add policy gates (Conftest)
+01 Scan source code              06 Add CI pipeline
+02 Scan infrastructure           07 Add security configs
+03 Auto-fix findings             08 Add pre-commit hooks
+04 Rescan and compare            09 Harden CI/CD
+                                 10 Deploy to dev
+```
+
+### Phase 2 — Platform Hardening
+
+Harden the cluster. Deploy admission control. Lock down access and network. Deploy to staging.
+
+```
+00 Audit your cluster            05 Secrets management (ESO)
+01 Auto-fix cluster security     06 Scan and verify
+02 Deploy admission control      07 Wire CI/CD
+03 RBAC audit                    08 Deploy staging
+04 Network policies              09 Compliance report
+```
+
+### Phase 3 — Runtime Security
+
+Deploy detection before the app. Deploy the app. Monitor and respond after.
+
+```
+Pre-deploy:                      Post-deploy:
+  00 Install prerequisites         06 Tune Falco
+  01 Deploy Falco                  07 SIEM integration
+  02 Deploy monitoring             08 Incident response
+  03 Deploy logging                09 Detection validation
+  04 Verify container hardening
+Deploy:
+  05 Deploy application (ArgoCD)
+```
+
+### Phase 4 — Cloud Security
+
+Harden the cloud account. AWS by default, Azure and GCP equivalents noted.
+
+```
+00 Scan your IaC                 05 Monitoring & detection
+01 VPC & network security        06 ECR & CI/CD pipeline
+02 IAM hardening                 07 Security validation
+03 Data protection               08 Incident response
+04 EKS security
+```
+
+### Phase 5 — Compliance Ready
+
+Map everything to NIST 800-53. Produce evidence for auditors.
+
+```
+00 Gap assessment                05 Identity & secrets (IA)
+01 Access control (AC)           06 Vulnerability & integrity (SI/RA)
+02 Audit logging (AU)            07 Incident response (IR)
+03 Configuration management (CM) 08 Documentation package
+04 System communications (SC)
+```
+
+---
+
+## Repository Structure
+
+```
+OSS-copilot/
+  MSSP/                          <- The framework (5 packages, 49 playbooks)
+    01-application-hardening/    <- Code + infra scanning, fixing, CI gates
+    02-platform-hardening/       <- K8s hardening, admission control, RBAC
+    03-runtime-security/         <- Falco, monitoring, ArgoCD deploy, IR
+    04-cloud-security/           <- AWS/Azure/GCP hardening, detection
+    05-compliance-ready/         <- NIST 800-53, FedRAMP, evidence packaging
+  Target-Projects/               <- Where you clone projects to scan
+    slot-1/
+      mssp-outputs/              <- Scan results land here
+    slot-2/
+    slot-3/
+  Mlops/                         <- ML pipeline tooling (separate)
+  docs/                          <- Enterprise integration guides
+```
+
+---
+
+## Multi-Cloud
+
+All playbooks default to AWS. Azure and GCP equivalents are shown where the workflow differs.
+
+| Concept | AWS | Azure | GCP |
+|---------|-----|-------|-----|
+| Identity federation | IRSA (OIDC) | Pod Identity | Workload Identity |
+| IaC scanning | `CKV_AWS_*` | `CKV_AZURE_*` | `CKV_GCP_*` |
+| Threat detection | GuardDuty | Defender for Cloud | Security Command Center |
+| CIS benchmark | `prowler aws` | `prowler azure` | `prowler gcp` |
+| Secret management | Secrets Manager | Key Vault | Secret Manager |
+| Container registry | ECR | ACR | Artifact Registry |
+| Managed K8s | EKS | AKS | GKE |
 
 ---
 
 ## Who This Is For
 
+**Junior DevOps engineers** who need step-by-step guidance on security hardening.
+
 **Security teams** who want to clear the noise before enterprise tools run.
 
-**MSSPs and consultants** (GuidePoint, Deloitte, PwC) who walk into client
-environments and need a triage layer before the enterprise tools add value.
-Run this first. Clear the noise. Then the $200K/yr tool focuses on signal.
+**MSSPs and consultants** who walk into client environments and need a triage layer before the enterprise stack adds value.
 
-**Platform engineers** who own the Kubernetes stack and need to prove it's
-hardened without waiting for a vendor POC.
+**Platform engineers** who own the Kubernetes stack and need to prove it's hardened.
 
-**Students and cert preppers** — the cluster playbooks map directly to CKS
-(Certified Kubernetes Security Specialist) exam domains.
+**Students and cert preppers** — the cluster and cloud playbooks map to CKS, AWS Security Specialty, and NIST frameworks.
+
+---
 
 ## Philosophy
 
 Open source handles the load. Paid tools handle the gap.
 
-This repo is not anti-enterprise. Prisma Cloud, Wiz, and Splunk are genuinely
-good at what they do. But most of what they catch in their first scan — the LOWs,
-the MEDIUMs, the misconfigurations — open source catches too.
+This is not anti-enterprise. Prisma Cloud, Wiz, and Sysdig are genuinely good at what they do. But most of what they catch in their first scan — the LOWs, the MEDIUMs, the misconfigurations — open source catches too.
 
-Run OSS-Copilot first. Fix the noise. Then point your enterprise tool at what's
-left. That's when you get real value from the license.
+Run this first. Fix the noise. Then the enterprise tool focuses on what only it can do: deep taint analysis, ML anomaly detection, attack path mapping, and global threat intelligence.
 
-## Enterprise Coverage Map
+That's when you get real value from the license.
 
-For the full tool-by-tool breakdown across all 5 C's — what enterprise does,
-what open source covers, and where to buy:
-
-[`docs/enterprise-map.md`](docs/enterprise-map.md)
-
-## Enterprise Integrations
-
-Two ways to connect OSS-Copilot to enterprise tools:
-
-| Integration | Method | Guide |
-|-------------|--------|-------|
-| **AWS Security Hub** | Prowler pushes ASFF natively (one flag) | [`docs/integrations/security-hub.md`](docs/integrations/security-hub.md) |
-| **Prisma Cloud** | Checkov outputs Prisma format natively | [`docs/integrations/prisma-cloud.md`](docs/integrations/prisma-cloud.md) |
-| **Splunk** | Any scanner JSON via HTTP Event Collector | [`docs/integrations/splunk.md`](docs/integrations/splunk.md) |
-| **Wiz** | Fix first — Wiz sees clean environment | [`docs/integrations/wiz.md`](docs/integrations/wiz.md) |
-| **CrowdStrike** | Via Splunk intermediary | [`docs/integrations/crowdstrike.md`](docs/integrations/crowdstrike.md) |
-
-Full guide: [`docs/integrations/README.md`](docs/integrations/README.md)
-
-## Prerequisites
-
-Most scripts check for tool availability and print install instructions if missing.
-Core tools used across layers:
-
-| Tool | Install | Used In |
-|------|---------|---------|
-| [Trivy](https://github.com/aquasecurity/trivy) | `brew install trivy` | Code, Container, Cloud |
-| [Semgrep](https://github.com/returntocorp/semgrep) | `pip install semgrep` | Code |
-| [Gitleaks](https://github.com/gitleaks/gitleaks) | `brew install gitleaks` | Code |
-| [Hadolint](https://github.com/hadolint/hadolint) | `brew install hadolint` | Container |
-| [kube-bench](https://github.com/aquasecurity/kube-bench) | `brew install kube-bench` | Cluster |
-| [Kubescape](https://github.com/kubescape/kubescape) | `curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh \| bash` | Cluster |
-| [Prowler](https://github.com/prowler-cloud/prowler) | `pip install prowler` | Cloud |
-| [Checkov](https://github.com/bridgecrewio/checkov) | `pip install checkov` | Cloud |
+---
 
 ## License
 

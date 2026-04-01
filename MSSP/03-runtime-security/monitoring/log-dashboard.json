@@ -1,0 +1,157 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Log Aggregation Pipeline — Fluent Bit + Loki",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Log Ingestion Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(fluentbit_input_records_total[5m]))",
+          "legendFormat": "Records ingested/s"
+        },
+        {
+          "expr": "sum(rate(fluentbit_output_proc_records_total[5m]))",
+          "legendFormat": "Records shipped/s"
+        }
+      ]
+    },
+    {
+      "title": "Output Errors & Retries",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(fluentbit_output_errors_total[5m]))",
+          "legendFormat": "Errors/s"
+        },
+        {
+          "expr": "sum(rate(fluentbit_output_retries_total[5m]))",
+          "legendFormat": "Retries/s"
+        },
+        {
+          "expr": "sum(rate(fluentbit_output_retries_failed_total[5m]))",
+          "legendFormat": "Failed retries/s"
+        }
+      ]
+    },
+    {
+      "title": "Logs by Namespace",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (namespace) (rate(fluentbit_input_records_total[5m])))",
+          "legendFormat": "{{ namespace }}"
+        }
+      ]
+    },
+    {
+      "title": "Fluent Bit Memory Usage",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "expr": "avg(container_memory_usage_bytes{namespace='logging', container='fluent-bit'} / container_spec_memory_limit_bytes{namespace='logging', container='fluent-bit'} * 100)",
+          "legendFormat": "Avg Memory %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 85 }
+            ]
+          },
+          "unit": "percent",
+          "max": 100
+        }
+      }
+    },
+    {
+      "title": "Fluent Bit Pod Coverage",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "expr": "kube_daemonset_status_number_ready{namespace='logging', daemonset='fluent-bit'}",
+          "legendFormat": "Ready"
+        },
+        {
+          "expr": "kube_daemonset_status_desired_number_scheduled{namespace='logging', daemonset='fluent-bit'}",
+          "legendFormat": "Desired"
+        }
+      ]
+    },
+    {
+      "title": "Loki Ingestion Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(rate(loki_distributor_lines_received_total[5m]))",
+          "legendFormat": "Lines received/s"
+        },
+        {
+          "expr": "sum(rate(loki_ingester_chunks_stored_total[5m]))",
+          "legendFormat": "Chunks stored/s"
+        }
+      ]
+    },
+    {
+      "title": "Loki Storage Size",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "kubelet_volume_stats_used_bytes{namespace='logging', persistentvolumeclaim=~'.*loki.*'} / 1024 / 1024 / 1024",
+          "legendFormat": "Storage Used (GB)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes"
+        }
+      }
+    },
+    {
+      "title": "Error Logs by Namespace (LogQL)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum by (namespace) (rate({job=\"fluent-bit\"} |= \"error\" [5m]))",
+          "legendFormat": "{{ namespace }}"
+        }
+      ]
+    },
+    {
+      "title": "Falco Events in Logs",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "datasource": "Loki",
+      "targets": [
+        {
+          "expr": "sum by (priority) (rate({source=\"falco\"} [5m]))",
+          "legendFormat": "{{ priority }}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["observability", "logging", "fluent-bit", "loki", "ghost-protocol"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Log Aggregation Pipeline",
+  "uid": "gp-log-pipeline"
+}

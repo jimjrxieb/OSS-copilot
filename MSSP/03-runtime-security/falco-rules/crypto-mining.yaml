@@ -1,0 +1,205 @@
+# crypto-mining.yaml
+# Detects cryptocurrency mining activity in containers.
+# Covers known miner binaries, mining pool connections, stratum protocol,
+# mining config files, and suspicious CPU-intensive network patterns.
+#
+# Apply:
+#   bash tools/tune-falco.sh --add-allowlist 01-detection/falco-rules/crypto-mining.yaml
+
+# ── Lists ───────────────────────────────────────────────────────────────────
+- list: known_miner_binaries
+  items:
+    - xmrig
+    - minergate
+    - cpuminer
+    - minerd
+    - ethminer
+    - cgminer
+    - bfgminer
+    - t-rex
+    - phoenixminer
+    - nbminer
+    - lolminer
+    - ccminer
+    - sgminer
+    - claymore
+    - nheqminer
+    - cryptonight
+
+- list: mining_pool_domains
+  items:
+    - pool.minergate.com
+    - monerohash.com
+    - moneropool.com
+    - xmrpool.eu
+    - nanopool.org
+    - hashvault.pro
+    - minexmr.com
+    - herominers.com
+    - supportxmr.com
+    - pool.hashvault.pro
+    - 2miners.com
+    - f2pool.com
+    - ethermine.org
+    - flypool.org
+    - unmineable.com
+
+- list: mining_config_filenames
+  items:
+    - config.json
+    - miner.conf
+    - pools.txt
+    - xmrig.json
+    - mining.conf
+    - pool_config.json
+
+# ── Macros ──────────────────────────────────────────────────────────────────
+- macro: in_container
+  condition: >
+    container.id != host
+
+- macro: outbound_conn
+  condition: >
+    ((evt.type = connect and evt.dir = <) or
+     (evt.type in (sendto, sendmsg) and evt.dir = < and fd.l4proto != udp)) and
+    fd.typechar = 4
+
+# ── Rules ───────────────────────────────────────────────────────────────────
+
+# Detect: known cryptocurrency miner binary executed
+- rule: Known Crypto Miner Binary Executed
+  desc: >
+    A process matching a known cryptocurrency miner name was executed
+    inside a container. Indicates cryptojacking / resource hijacking.
+  condition: >
+    spawned_process and
+    in_container and
+    proc.name in (known_miner_binaries)
+  output: >
+    Crypto miner binary executed
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name
+     user=%user.name)
+  priority: CRITICAL
+  tags: [MITRE_Impact, T1496, container, cryptomining]
+
+# Detect: stratum mining protocol connection
+- rule: Stratum Mining Protocol Connection
+  desc: >
+    A process initiated a connection on a port commonly used by the stratum
+    mining protocol (3333, 4444, 5555, 8333, 9999, 14444, 45700).
+    These ports are rarely used for legitimate services.
+  condition: >
+    outbound_conn and
+    in_container and
+    fd.sport in (3333, 4444, 5555, 8333, 9999, 14444, 45700) and
+    not fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+  output: >
+    Stratum mining protocol connection detected
+    (proc=%proc.name dest=%fd.sip:%fd.sport container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Impact, T1496, container, cryptomining, network]
+
+# Detect: mining pool DNS resolution
+- rule: Mining Pool DNS Lookup
+  desc: >
+    A DNS lookup was made for a known cryptocurrency mining pool domain.
+    This often precedes stratum protocol connections.
+  condition: >
+    evt.type in (sendto, sendmsg, connect) and
+    in_container and
+    fd.l4proto = udp and
+    fd.sport = 53 and
+    (fd.name contains "minergate" or
+     fd.name contains "nanopool" or
+     fd.name contains "hashvault" or
+     fd.name contains "minexmr" or
+     fd.name contains "2miners" or
+     fd.name contains "f2pool" or
+     fd.name contains "ethermine" or
+     fd.name contains "flypool" or
+     fd.name contains "unmineable" or
+     fd.name contains "herominers" or
+     fd.name contains "supportxmr" or
+     fd.name contains "monerohash" or
+     fd.name contains "moneropool" or
+     fd.name contains "xmrpool")
+  output: >
+    Mining pool DNS lookup
+    (proc=%proc.name fd=%fd.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Impact, T1496, container, cryptomining, dns]
+
+# Detect: mining config file created in container
+- rule: Mining Configuration File Created
+  desc: >
+    A file commonly associated with mining software configuration was
+    created or written in a container. Miners typically require a config
+    file with pool URLs, wallet addresses, and worker names.
+  condition: >
+    (evt.type in (open, openat, openat2) and evt.is_open_write = true) and
+    in_container and
+    (fd.name contains "xmrig" or
+     fd.name contains "miner.conf" or
+     fd.name contains "mining.conf" or
+     fd.name contains "pool_config" or
+     fd.name contains "stratum" or
+     fd.name contains "cpuminer") and
+    not proc.name in (vim, vi, nano, emacs)
+  output: >
+    Mining config file created
+    (file=%fd.name proc=%proc.name container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Impact, T1496, container, cryptomining]
+
+# Detect: process with mining-related command line arguments
+- rule: Process with Mining Arguments
+  desc: >
+    A process was launched with command line arguments commonly associated
+    with cryptocurrency mining: stratum+tcp, wallet addresses, pool URLs,
+    or mining algorithm names.
+  condition: >
+    spawned_process and
+    in_container and
+    (proc.cmdline contains "stratum+tcp://" or
+     proc.cmdline contains "stratum+ssl://" or
+     proc.cmdline contains "--donate-level" or
+     proc.cmdline contains "--coin=" or
+     proc.cmdline contains "--algo=cryptonight" or
+     proc.cmdline contains "--algo=randomx" or
+     proc.cmdline contains "--algo=ethash" or
+     proc.cmdline contains "--algo=kawpow" or
+     proc.cmdline contains "-o pool." or
+     proc.cmdline contains "--pool=" or
+     proc.cmdline contains "--wallet=")
+  output: >
+    Process launched with mining arguments
+    (proc=%proc.name cmdline=%proc.cmdline container=%container.name
+     image=%container.image.repository ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: CRITICAL
+  tags: [MITRE_Impact, T1496, container, cryptomining]
+
+# Detect: binary downloaded and immediately executed (dropper pattern)
+- rule: Crypto Miner Dropper Pattern
+  desc: >
+    A download tool (curl/wget) was followed by execution of a binary in
+    /tmp or /dev/shm. This is a common pattern for cryptojacking droppers
+    that download and immediately execute mining binaries.
+  condition: >
+    spawned_process and
+    in_container and
+    (proc.exepath startswith /tmp/ or
+     proc.exepath startswith /dev/shm/ or
+     proc.exepath startswith /var/tmp/) and
+    proc.pname in (bash, sh, dash) and
+    not proc.name in (ls, cat, head, tail, grep)
+  output: >
+    Binary executed from temp directory (possible miner dropper)
+    (proc=%proc.name exepath=%proc.exepath cmdline=%proc.cmdline
+     container=%container.name image=%container.image.repository
+     ns=%k8s.ns.name pod=%k8s.pod.name)
+  priority: HIGH
+  tags: [MITRE_Impact, T1496, MITRE_Execution, T1059.004, container, cryptomining]

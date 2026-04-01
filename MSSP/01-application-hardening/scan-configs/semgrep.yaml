@@ -1,0 +1,42 @@
+# Semgrep Configuration — Ghost Protocol
+# Multi-language SAST scanning for OWASP Top 10 and CWE Top 25
+# Docs: https://semgrep.dev/docs/
+#
+# NOTE: This file documents which registry packs we use.
+# Registry packs (p/...) are passed as --config flags in run-all-scanners.sh,
+# NOT via this file. Semgrep's config file format expects rule definitions,
+# not registry shorthand references.
+#
+# If you add custom rules, put them in a separate YAML file and add another
+# --config flag in run-all-scanners.sh pointing to that file.
+
+# ──────────────────────────────────────────────────────────────────────────
+# Registry packs used (passed via --config in run-all-scanners.sh):
+#
+#   p/security-audit        General security vulnerabilities
+#   p/owasp-top-ten         OWASP Top 10 coverage
+#   p/secrets               Secret detection patterns
+#   p/python                Python security
+#   p/javascript            JavaScript security
+#   p/golang                Go security
+#   p/kubernetes            Kubernetes manifest scanning
+#   p/dockerfile            Dockerfile best practices
+#   p/terraform             Terraform security
+#   p/github-actions        GitHub Actions security
+#
+# Previously included but removed (not available in registry or deprecated):
+#   p/cwe-top-25            (use p/owasp-top-ten instead)
+#   p/typescript            (covered by p/javascript)
+#   p/java, p/ruby, p/php   (add back if scanning those languages)
+#   p/csharp                (add back if scanning C#)
+#   p/supply-chain          (requires Semgrep Pro)
+#   p/jwt                   (not a valid registry pack)
+# ──────────────────────────────────────────────────────────────────────────
+
+# Exclusions (also passed via --exclude flags in run-all-scanners.sh):
+#   tests/, test/, node_modules/, vendor/, venv/, .git/
+#   *.min.js, *.bundle.js
+
+# Performance settings (passed via flags):
+#   --timeout 30            seconds per file
+#   --metrics off           no anonymous usage data

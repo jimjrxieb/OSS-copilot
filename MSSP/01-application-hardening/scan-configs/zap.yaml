@@ -1,0 +1,72 @@
+# OWASP ZAP Automation Framework config
+# Used by: zap_scan_npc.py (mounted into Docker container)
+#
+# Docs: https://www.zaproxy.org/docs/desktop/addons/automation-framework/
+
+env:
+  contexts:
+    - name: "default"
+      urls:
+        - "${TARGET_URL}"
+      excludePaths:
+        # Static assets — no security value in scanning these
+        - ".*\\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$"
+        # Logout endpoints — avoid killing the session mid-scan
+        - ".*/logout.*"
+        - ".*/signout.*"
+        # Health/status endpoints — noise
+        - ".*/health.*"
+        - ".*/ready.*"
+        - ".*/status.*"
+
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+      scanOnlyInScope: true
+      maxBodySizeInBytesToScan: 1000000
+
+  - type: spider
+    parameters:
+      maxDuration: 5       # minutes
+      maxDepth: 5
+      maxChildren: 20
+      acceptCookies: true
+      handleODataParametersVisited: false
+      handleParameters: "USE_ALL"
+      maxParseSizeBytes: 2621440
+      parseComments: true
+      parseDsStore: false
+      parseGit: false
+      parseSitemapXml: true
+      parseSVNEntries: false
+      postForm: true
+      processForm: true
+      sendRefererHeader: true
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5       # minutes
+
+  - type: alertFilter
+    rules:
+      # 10015 — Re-examine Cache-control Directives (noisy, low risk)
+      - ruleId: 10015
+        newRisk: "False Positive"
+      # 10037 — Server Leaks Info via X-Powered-By (informational noise)
+      - ruleId: 10037
+        newRisk: "False Positive"
+      # 10036 — Server Leaks Version Info via Server header
+      - ruleId: 10036
+        newRisk: "Info"
+
+# Rate limiting — conservative to avoid DoS on client targets
+network:
+  maxRequestsPerSecond: 20
+  connectionTimeout: 30
+  readTimeout: 30

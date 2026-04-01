@@ -1,0 +1,127 @@
+# Log Pipeline — Prometheus Alert Rules
+#
+# Monitors the health of the logging pipeline:
+# Fluent Bit → Loki → Grafana
+#
+# Deploy:
+#   kubectl apply -f 04-monitoring/log-alerts.yaml -n monitoring
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: log-alerts
+  namespace: monitoring
+  labels:
+    app: observability
+    component: logging
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: logging-infrastructure
+      rules:
+
+        # Fluent Bit not running on all nodes
+        - alert: FluentBitDown
+          expr: |
+            kube_daemonset_status_number_unavailable{
+              namespace="logging",
+              daemonset="fluent-bit"
+            } > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: logging
+          annotations:
+            summary: "Fluent Bit pods not running on all nodes"
+            description: |
+              {{ $value }} node(s) missing Fluent Bit pods. Logs from those nodes are not being collected.
+              Check: kubectl get ds fluent-bit -n logging
+              Fix: kubectl rollout restart ds/fluent-bit -n logging
+
+        # Fluent Bit dropping logs (output errors)
+        - alert: FluentBitOutputErrors
+          expr: |
+            rate(fluentbit_output_errors_total[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: logging
+          annotations:
+            summary: "Fluent Bit failing to ship logs"
+            description: |
+              Fluent Bit cannot reach the log backend (Loki/ES/CloudWatch).
+              {{ $value | printf "%.2f" }} errors/sec.
+              Check backend connectivity and credentials.
+
+        # Fluent Bit retry rate high
+        - alert: FluentBitHighRetryRate
+          expr: |
+            rate(fluentbit_output_retries_total[5m]) > 10
+          for: 10m
+          labels:
+            severity: warning
+            component: logging
+          annotations:
+            summary: "Fluent Bit retry rate is high"
+            description: |
+              Fluent Bit is retrying log shipment at {{ $value | printf "%.0f" }} retries/sec.
+              Backend may be slow or overloaded.
+
+        # Fluent Bit memory pressure
+        - alert: FluentBitMemoryHigh
+          expr: |
+            container_memory_usage_bytes{namespace="logging", container="fluent-bit"}
+            / container_spec_memory_limit_bytes{namespace="logging", container="fluent-bit"}
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+            component: logging
+          annotations:
+            summary: "Fluent Bit memory usage above 85%"
+            description: |
+              Fluent Bit may OOM. Increase memory limit or reduce Mem_Buf_Limit.
+
+        # Loki not accepting writes
+        - alert: LokiIngesterDown
+          expr: |
+            absent(up{job="loki"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+            component: logging
+          annotations:
+            summary: "Loki is not accepting log writes"
+            description: |
+              Loki ingester is down. All logs are being buffered in Fluent Bit.
+              Check: kubectl get pods -n logging -l app.kubernetes.io/name=loki
+
+        # Loki ingestion rate limit hit
+        - alert: LokiRateLimited
+          expr: |
+            rate(loki_distributor_lines_received_total[5m])
+            > (loki_distributor_ingestion_rate_limit * 0.9)
+          for: 10m
+          labels:
+            severity: warning
+            component: logging
+          annotations:
+            summary: "Loki approaching ingestion rate limit"
+            description: |
+              Log ingestion is near the rate limit. Increase limits_config.ingestion_rate_mb
+              or reduce log volume (filter noisy namespaces in Fluent Bit).
+
+        # No logs received (pipeline dead)
+        - alert: NoLogsReceived
+          expr: |
+            rate(fluentbit_input_records_total[15m]) == 0
+          for: 15m
+          labels:
+            severity: warning
+            component: logging
+          annotations:
+            summary: "No logs collected in 15 minutes"
+            description: |
+              Fluent Bit is not reading any container logs.
+              Check: /var/log/containers/ is accessible, tail input is configured.

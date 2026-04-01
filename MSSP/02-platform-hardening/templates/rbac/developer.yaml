@@ -1,0 +1,72 @@
+# GP-Copilot RBAC Template: Developer
+# Least-privilege role scoped to a single namespace.
+# Replace NAMESPACE and TEAM_NAME before applying.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+  namespace: NAMESPACE
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    gp-copilot/template: rbac-developer
+  annotations:
+    gp-copilot/value-add: "least-privilege namespace role — replaces default edit ClusterRole"
+    gp-copilot/package: "02-CLUSTER-HARDEN"
+rules:
+  # Read-only access to observe workloads and events
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - configmaps
+      - secrets
+      - events
+      - endpoints
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+
+  # Write access to own workloads
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - services
+      - configmaps
+    verbs: ["create", "update", "patch", "delete"]
+
+  # Debugging: exec and port-forward
+  - apiGroups: [""]
+    resources:
+      - pods/exec
+      - pods/portforward
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-binding
+  namespace: NAMESPACE
+  labels:
+    app.kubernetes.io/managed-by: gp-copilot
+    gp-copilot/template: rbac-developer
+  annotations:
+    gp-copilot/value-add: "binds developer role to team group — no cluster-level access"
+    gp-copilot/package: "02-CLUSTER-HARDEN"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: developer
+subjects:
+  - kind: Group
+    name: team-TEAM_NAME
+    apiGroup: rbac.authorization.k8s.io

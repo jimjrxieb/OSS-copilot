@@ -1,0 +1,45 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-pss-labels
+  annotations:
+    policies.kyverno.io/title: Require Pod Security Standards Labels
+    policies.kyverno.io/category: Cluster Hardening
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Namespace
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Pod Security Standards (PSS) replace the deprecated PodSecurityPolicy.
+      This policy requires namespaces to have PSS labels configured.
+      At minimum, namespaces should have pod-security.kubernetes.io/enforce label.
+      CKS Exam Domain: Cluster Hardening (15%)
+      CIS Benchmark: 5.2.1
+    gp-copilot/category: "custom"
+    gp-copilot/standard: "CIS-5.2.0"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-pss-enforce-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+      exclude:
+        any:
+          - resources:
+              names:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - default
+      validate:
+        message: >-
+          Namespaces must have Pod Security Standards labels.
+          Add: pod-security.kubernetes.io/enforce: baseline (or restricted)
+        pattern:
+          metadata:
+            labels:
+              pod-security.kubernetes.io/enforce: "baseline | restricted"

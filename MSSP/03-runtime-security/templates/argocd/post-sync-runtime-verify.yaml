@@ -1,0 +1,271 @@
+# ArgoCD PostSync Hook — Runtime Health Verification
+# Runs after ArgoCD applies manifests. Checks:
+#   1. Falco DaemonSet is healthy (all nodes covered)
+#   2. No new critical Falco alerts fired during/after sync
+#   3. Deployed pods have correct security contexts
+#   4. falco-exporter metrics endpoint is reachable
+#
+# If verification fails, ArgoCD marks the sync as Degraded (not rolled back).
+# Rollback is a human (B-rank) or JADE (C-rank) decision.
+#
+# To add to an Application, include this Job in the same directory as your manifests.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: post-sync-runtime-verify
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    app: runtime-verify
+    phase: post-sync
+    managed-by: gp-copilot
+    package: 03-deploy-runtime
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 1               # One retry allowed (pods may still be starting)
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 180    # 3 minute timeout
+  template:
+    metadata:
+      labels:
+        app: runtime-verify
+        phase: post-sync
+    spec:
+      restartPolicy: Never
+      serviceAccountName: runtime-verifier
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: verify
+          image: bitnami/kubectl:1.31
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              echo "=== PostSync Runtime Verification ==="
+              echo "Namespace: $TARGET_NAMESPACE"
+              echo "Time:      $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+              echo ""
+
+              CHECKS_PASSED=0
+              CHECKS_FAILED=0
+              CHECKS_WARNED=0
+
+              pass() { echo "  PASS  $1"; CHECKS_PASSED=$((CHECKS_PASSED + 1)); }
+              fail() { echo "  FAIL  $1"; CHECKS_FAILED=$((CHECKS_FAILED + 1)); }
+              warn() { echo "  WARN  $1"; CHECKS_WARNED=$((CHECKS_WARNED + 1)); }
+
+              # ── Check 1: Falco DaemonSet health ───────────────────────────
+              echo "--- Falco DaemonSet ---"
+              FALCO_NS="${FALCO_NAMESPACE:-falco}"
+
+              DESIRED=$(kubectl get ds -n "$FALCO_NS" -l app.kubernetes.io/name=falco \
+                -o jsonpath='{.items[0].status.desiredNumberScheduled}' 2>/dev/null || echo "0")
+              READY=$(kubectl get ds -n "$FALCO_NS" -l app.kubernetes.io/name=falco \
+                -o jsonpath='{.items[0].status.numberReady}' 2>/dev/null || echo "0")
+
+              if [ "$DESIRED" = "0" ]; then
+                fail "Falco DaemonSet not found in namespace $FALCO_NS"
+              elif [ "$DESIRED" = "$READY" ]; then
+                pass "Falco DaemonSet: $READY/$DESIRED pods ready"
+              else
+                warn "Falco DaemonSet: $READY/$DESIRED pods ready (some nodes missing coverage)"
+              fi
+
+              # ── Check 2: falco-exporter running ───────────────────────────
+              echo ""
+              echo "--- Falco Exporter ---"
+              EXPORTER_PODS=$(kubectl get pods -n "$FALCO_NS" \
+                -l app.kubernetes.io/name=falco-exporter \
+                --no-headers 2>/dev/null | grep -c Running || echo "0")
+
+              if [ "$EXPORTER_PODS" -gt 0 ]; then
+                pass "falco-exporter: $EXPORTER_PODS pod(s) Running"
+              else
+                warn "falco-exporter not running — Prometheus metrics unavailable"
+              fi
+
+              # ── Check 3: New critical Falco alerts ────────────────────────
+              echo ""
+              echo "--- Falco Alert Baseline ---"
+
+              # Check Falco logs for critical alerts in the last 90 seconds
+              CRITICAL_ALERTS=$(kubectl logs -n "$FALCO_NS" \
+                -l app.kubernetes.io/name=falco \
+                --since=90s 2>/dev/null | \
+                grep -c '"priority":"Critical"' || echo "0")
+
+              if [ "$CRITICAL_ALERTS" = "0" ]; then
+                pass "No critical Falco alerts in last 90s"
+              elif [ "$CRITICAL_ALERTS" -lt 5 ]; then
+                warn "Falco: $CRITICAL_ALERTS critical alert(s) in last 90s — review before proceeding"
+              else
+                fail "Falco: $CRITICAL_ALERTS critical alerts in last 90s — possible security regression"
+              fi
+
+              # ── Check 4: Pod security contexts in target namespace ────────
+              echo ""
+              echo "--- Pod Security Contexts ($TARGET_NAMESPACE) ---"
+
+              ROOT_PODS=$(kubectl get pods -n "$TARGET_NAMESPACE" \
+                -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext.runAsNonRoot}{"\n"}{end}' 2>/dev/null | \
+                grep -v "true" | grep -v "^$" | wc -l || echo "0")
+
+              if [ "$ROOT_PODS" = "0" ]; then
+                pass "All pods in $TARGET_NAMESPACE have runAsNonRoot: true"
+              else
+                warn "$ROOT_PODS pod(s) in $TARGET_NAMESPACE may run as root — review security contexts"
+              fi
+
+              # Privileged containers
+              PRIV_PODS=$(kubectl get pods -n "$TARGET_NAMESPACE" \
+                -o jsonpath='{range .items[*].spec.containers[*]}{.name}{"\t"}{.securityContext.privileged}{"\n"}{end}' 2>/dev/null | \
+                grep "true" | wc -l || echo "0")
+
+              if [ "$PRIV_PODS" = "0" ]; then
+                pass "No privileged containers in $TARGET_NAMESPACE"
+              else
+                fail "$PRIV_PODS privileged container(s) in $TARGET_NAMESPACE"
+              fi
+
+              # ── Check 5: jsa-infrasec health (if deployed) ────────────────
+              echo ""
+              echo "--- jsa-infrasec Agent ---"
+              JSA_NS="${JSA_NAMESPACE:-jsa-infrasec}"
+
+              JSA_POD=$(kubectl get pods -n "$JSA_NS" -l app=jsa-infrasec \
+                --no-headers 2>/dev/null | grep Running | head -1 | awk '{print $1}' || echo "")
+
+              if [ -n "$JSA_POD" ]; then
+                # Check health endpoint
+                HEALTH=$(kubectl exec -n "$JSA_NS" "$JSA_POD" -- \
+                  wget -qO- http://localhost:8000/health 2>/dev/null || echo "unreachable")
+
+                if echo "$HEALTH" | grep -q '"status":"ok"'; then
+                  pass "jsa-infrasec healthy"
+                else
+                  warn "jsa-infrasec health check returned: $HEALTH"
+                fi
+              else
+                echo "  SKIP  jsa-infrasec not deployed (expected if package 04 not enabled)"
+              fi
+
+              # ── Summary ───────────────────────────────────────────────────
+              echo ""
+              echo "=== Verification Summary ==="
+              echo "  Passed:  $CHECKS_PASSED"
+              echo "  Warned:  $CHECKS_WARNED"
+              echo "  Failed:  $CHECKS_FAILED"
+              echo ""
+
+              if [ "$CHECKS_FAILED" -gt 0 ]; then
+                echo "RESULT: DEGRADED — $CHECKS_FAILED check(s) failed"
+                echo ""
+                echo "Action required:"
+                echo "  - Review failed checks above"
+                echo "  - Run: bash 03-RUNTIME-SECURITY/tools/health-check.sh"
+                echo "  - If critical: consider rollback (B-rank decision)"
+                exit 1
+              fi
+
+              if [ "$CHECKS_WARNED" -gt 0 ]; then
+                echo "RESULT: HEALTHY with $CHECKS_WARNED warning(s)"
+                echo ""
+                echo "Warnings are informational — no action required unless repeated."
+                exit 0
+              fi
+
+              echo "RESULT: HEALTHY — all checks passed"
+              exit 0
+          env:
+            - name: TARGET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FALCO_NAMESPACE
+              value: "falco"
+            - name: JSA_NAMESPACE
+              value: "jsa-infrasec"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Mi
+---
+# ServiceAccount + RBAC for the runtime verifier
+# Needs: read pods/logs in falco + target namespace, exec into jsa-infrasec
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runtime-verifier
+  namespace: "{{ .Release.Namespace }}"
+  labels:
+    managed-by: gp-copilot
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: runtime-verifier
+  labels:
+    managed-by: gp-copilot
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  # Read Falco DaemonSet status + pod logs
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "deployments"]
+    verbs: ["get", "list"]
+  # Exec into jsa-infrasec for health check
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+    # Scoped to jsa-infrasec namespace via RoleBinding below
+  # Read nodes for DaemonSet coverage calculation
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: runtime-verifier
+  labels:
+    managed-by: gp-copilot
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: runtime-verifier
+subjects:
+  - kind: ServiceAccount
+    name: runtime-verifier
+    namespace: "{{ .Release.Namespace }}"

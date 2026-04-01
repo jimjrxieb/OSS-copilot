@@ -1,0 +1,173 @@
+# Semgrep Rules — Frontend/Application Security (FedRAMP RA-5, SI-2)
+# Supplements the main semgrep-fedramp.yaml with app-specific rules for Python, JS, Go.
+
+rules:
+  # ──────────────── Authentication & Session (IA-2) ────────────────
+
+  - id: fedramp-weak-session-token
+    patterns:
+      - pattern-either:
+          - pattern: random.random()
+          - pattern: random.randint(...)
+          - pattern: random.choice(...)
+      - pattern-not-inside: |
+          import secrets
+    message: >
+      Using weak random for session/token generation. Use secrets.token_urlsafe() instead.
+      FedRAMP Control: IA-2, IA-5
+    severity: ERROR
+    languages: [python]
+    metadata:
+      nist: [IA-2, IA-5]
+      cwe: CWE-330
+      iron-legion-rank: D
+
+  - id: fedramp-no-session-expiry
+    patterns:
+      - pattern: |
+          session[$KEY] = ...
+      - pattern-not-inside: |
+          session.permanent = True
+    message: >
+      Session set without expiry configuration. Set session lifetime and idle timeout.
+      FedRAMP Control: IA-2
+    severity: WARNING
+    languages: [python]
+    metadata:
+      nist: [IA-2]
+      cwe: CWE-613
+      iron-legion-rank: D
+
+  # ──────────────── Input Validation (RA-5, SI-2) ────────────────
+
+  - id: fedramp-python-sql-injection
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $CURSOR.execute(f"...", ...)
+          - pattern: |
+              $CURSOR.execute("..." + $VAR + "...", ...)
+          - pattern: |
+              $CURSOR.execute("..." % $VAR, ...)
+          - pattern: |
+              $CURSOR.execute("...".format(...), ...)
+    message: >
+      SQL injection via string formatting. Use parameterized queries: cursor.execute("... %s ...", (val,))
+      FedRAMP Control: RA-5, SI-2
+    severity: ERROR
+    languages: [python]
+    metadata:
+      nist: [RA-5, SI-2]
+      cwe: CWE-89
+      iron-legion-rank: C
+
+  - id: fedramp-python-command-injection
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run($CMD, shell=True, ...)
+          - pattern: subprocess.call($CMD, shell=True, ...)
+          - pattern: subprocess.Popen($CMD, shell=True, ...)
+          - pattern: os.system($CMD)
+      - metavariable-pattern:
+          metavariable: $CMD
+          pattern-not: "..."
+    message: >
+      Command injection via shell=True with dynamic input. Use argument lists without shell=True.
+      FedRAMP Control: RA-5, SI-2
+    severity: ERROR
+    languages: [python]
+    metadata:
+      nist: [RA-5, SI-2]
+      cwe: CWE-78
+      iron-legion-rank: C
+
+  - id: fedramp-xss-dangerouslysetinnerhtml
+    pattern: dangerouslySetInnerHTML={{__html: $VAR}}
+    message: >
+      Potential XSS via dangerouslySetInnerHTML. Sanitize with DOMPurify or use React auto-escaping.
+      FedRAMP Control: RA-5, SI-2
+    severity: ERROR
+    languages: [javascript, typescript, jsx, tsx]
+    metadata:
+      nist: [RA-5, SI-2]
+      cwe: CWE-79
+      iron-legion-rank: C
+
+  - id: fedramp-python-yaml-unsafe
+    pattern: yaml.load($DATA)
+    fix: yaml.safe_load($DATA)
+    message: >
+      yaml.load() allows arbitrary code execution. Use yaml.safe_load().
+      FedRAMP Control: SI-2
+    severity: ERROR
+    languages: [python]
+    metadata:
+      nist: [SI-2]
+      cwe: CWE-502
+      iron-legion-rank: D
+
+  # ──────────────── Security Headers (SC-7, SC-8) ────────────────
+
+  - id: fedramp-cors-wildcard
+    pattern-either:
+      - pattern: |
+          Access-Control-Allow-Origin: "*"
+      - pattern: |
+          "Access-Control-Allow-Origin": "*"
+      - pattern: |
+          CORS(..., origins="*")
+      - pattern: |
+          cors({origin: "*"})
+    message: >
+      CORS allows all origins. Restrict to specific trusted domains.
+      FedRAMP Control: SC-7
+    severity: WARNING
+    languages: [python, javascript, typescript]
+    metadata:
+      nist: [SC-7]
+      cwe: CWE-942
+      iron-legion-rank: D
+
+  - id: fedramp-cookie-no-secure
+    patterns:
+      - pattern-either:
+          - pattern: |
+              Set-Cookie: ... ; ...
+          - pattern: |
+              response.set_cookie(...)
+      - pattern-not: |
+          ...secure=True...
+    message: >
+      Cookie set without Secure flag. Add secure=True for HTTPS-only cookies.
+      FedRAMP Control: SC-8
+    severity: WARNING
+    languages: [python]
+    metadata:
+      nist: [SC-8]
+      cwe: CWE-614
+      iron-legion-rank: D
+
+  # ──────────────── Secrets (IA-5) ────────────────
+
+  - id: fedramp-python-hardcoded-secret
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $VAR = "AKIA..."
+          - pattern: |
+              $VAR = "sk-..."
+          - pattern: |
+              password = "..."
+          - pattern: |
+              api_key = "..."
+          - pattern: |
+              secret_key = "..."
+    message: >
+      Potential hardcoded credential. Use environment variables or secrets manager.
+      FedRAMP Control: IA-5
+    severity: ERROR
+    languages: [python]
+    metadata:
+      nist: [IA-5]
+      cwe: CWE-798
+      iron-legion-rank: B

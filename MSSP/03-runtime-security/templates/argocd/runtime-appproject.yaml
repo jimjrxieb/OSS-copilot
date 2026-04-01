@@ -1,0 +1,74 @@
+# ArgoCD AppProject — scopes runtime security resources
+# Limits what namespaces, repos, and cluster resources the runtime Application can touch.
+#
+# Apply with:
+#   kubectl apply -f runtime-appproject.yaml
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: runtime-security
+  namespace: argocd
+  labels:
+    managed-by: gp-copilot
+    package: 03-deploy-runtime
+spec:
+  description: "Runtime security infrastructure — Falco, falco-exporter, jsa-infrasec, monitoring"
+
+  # Only these repos can source runtime security manifests
+  sourceRepos:
+    - "https://github.com/jimjrxieb/GP-Copilot.git"
+    - "https://falcosecurity.github.io/charts"
+    - "https://grafana.github.io/helm-charts"
+
+  # Allowed destination namespaces — no access to kube-system
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: falco
+    - server: https://kubernetes.default.svc
+      namespace: jsa-infrasec
+    - server: https://kubernetes.default.svc
+      namespace: gp-security
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+    - server: https://kubernetes.default.svc
+      namespace: logging
+    - server: https://kubernetes.default.svc
+      namespace: observability
+
+  # Cluster-scoped resources this project can manage
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+
+  # Namespace-scoped resources allowed
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: "*"
+    - group: apps
+      kind: "*"
+    - group: batch
+      kind: "*"
+    - group: monitoring.coreos.com
+      kind: PrometheusRule
+    - group: monitoring.coreos.com
+      kind: ServiceMonitor
+
+  # Deny dangerous resources
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: Secret
+      # Secrets are managed by External Secrets Operator, not ArgoCD
+
+  # Sync windows — no deployments during maintenance
+  syncWindows:
+    - kind: deny
+      schedule: "0 2 * * 0"    # Sunday 2am UTC
+      duration: 2h
+      applications:
+        - "*"
+      manualSync: true          # Allow manual override during window

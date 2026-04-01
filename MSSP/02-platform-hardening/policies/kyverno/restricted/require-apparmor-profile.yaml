@@ -1,0 +1,44 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-apparmor-profile
+  annotations:
+    policies.kyverno.io/title: Require AppArmor Profile
+    policies.kyverno.io/category: Pod Security Standards (Baseline)
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      AppArmor is a Linux security module that restricts container capabilities.
+      This policy requires containers to have an AppArmor profile annotation.
+      CKS Exam Domain: Monitoring, Logging and Runtime Security (20%)
+      CIS Benchmark: 5.7.3
+    gp-copilot/category: "restricted"
+    gp-copilot/standard: "CIS-5.7.1"
+    gp-copilot/value-add: "true"
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: check-apparmor
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+      validate:
+        message: >-
+          Containers must have an AppArmor profile annotation.
+          Add: container.apparmor.security.beta.kubernetes.io/<container-name>=runtime/default
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.metadata.annotations.keys(@) | length(@) }}"
+                operator: Equals
+                value: 0

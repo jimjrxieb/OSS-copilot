@@ -1,0 +1,122 @@
+# ArgoCD Sync Failure PrometheusRule alerts
+# Fires when ArgoCD syncs fail, get stuck, or apps degrade after sync.
+#
+# Requires:
+#   - prometheus-operator (kube-prometheus-stack) installed
+#   - ArgoCD metrics enabled (default: argocd-metrics service on port 8082)
+#
+# Apply with:
+#   kubectl apply -f sync-fail-alerts.yaml
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argocd-sync-alerts
+  namespace: monitoring
+  labels:
+    app: argocd
+    role: alert-rules
+    prometheus: kube-prometheus
+    managed-by: gp-copilot
+    package: 03-deploy-runtime
+spec:
+  groups:
+    - name: argocd-sync-health
+      rules:
+        # App sync failed — immediate attention
+        - alert: ArgocdSyncFailed
+          expr: |
+            argocd_app_info{sync_status="OutOfSync",health_status!="Healthy"} == 1
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "ArgoCD app {{ $labels.name }} sync failed"
+            description: >-
+              Application {{ $labels.name }} in project {{ $labels.project }} has been
+              OutOfSync and unhealthy for 5 minutes. This may indicate a policy violation
+              (PreSync gate failed) or a broken manifest. Check ArgoCD UI or run:
+              argocd app get {{ $labels.name }}
+            runbook_url: "https://wiki.internal/runbooks/argocd/sync-failed"
+
+        # App stuck in Progressing state — deploy hung
+        - alert: ArgocdSyncStuck
+          expr: |
+            argocd_app_info{health_status="Progressing"} == 1
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "ArgoCD app {{ $labels.name }} stuck progressing"
+            description: >-
+              Application {{ $labels.name }} has been in Progressing state for 15 minutes.
+              Pods may be failing to start, stuck in CrashLoopBackOff, or waiting on
+              dependencies. Check: kubectl get pods -n {{ $labels.dest_namespace }}
+            runbook_url: "https://wiki.internal/runbooks/argocd/sync-stuck"
+
+        # App degraded after sync — PostSync verification failed
+        - alert: ArgocdAppDegraded
+          expr: |
+            argocd_app_info{health_status="Degraded"} == 1
+          for: 5m
+          labels:
+            severity: critical
+            team: security
+          annotations:
+            summary: "ArgoCD app {{ $labels.name }} degraded after sync"
+            description: >-
+              Application {{ $labels.name }} is in Degraded state. If the PostSync
+              runtime verification hook failed, this means either Falco detected critical
+              alerts during deployment or pod security contexts are non-compliant. Run:
+              bash 03-RUNTIME-SECURITY/tools/health-check.sh
+            runbook_url: "https://wiki.internal/runbooks/argocd/app-degraded"
+
+        # PreSync security gate rejections — too many blocked syncs
+        - alert: ArgocdPreSyncGateBlocking
+          expr: |
+            increase(argocd_app_sync_total{phase="Error"}[1h]) > 5
+          for: 10m
+          labels:
+            severity: warning
+            team: security
+          annotations:
+            summary: "ArgoCD PreSync security gate blocking frequent syncs"
+            description: >-
+              {{ $value | humanize }} sync errors in the last hour. The PreSync security
+              gate may be blocking legitimate changes. Review conftest policy output:
+              kubectl logs -n {{ $labels.dest_namespace }} -l app=security-gate
+            runbook_url: "https://wiki.internal/runbooks/argocd/presync-gate-blocking"
+
+        # ArgoCD controller down — no syncs happening
+        - alert: ArgocdControllerDown
+          expr: |
+            up{job="argocd-application-controller"} == 0
+          for: 3m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "ArgoCD application controller is down"
+            description: >-
+              ArgoCD application controller is unreachable. No syncs will occur.
+              GitOps is offline. Check: kubectl get pods -n argocd
+            runbook_url: "https://wiki.internal/runbooks/argocd/controller-down"
+
+        # Sync after Falco went down — deploying blind
+        - alert: ArgocdSyncWithoutFalco
+          expr: |
+            (argocd_app_sync_total > 0) and on() (up{job="falco-exporter"} == 0)
+          for: 2m
+          labels:
+            severity: critical
+            team: security
+          annotations:
+            summary: "ArgoCD syncing while Falco is down"
+            description: >-
+              ArgoCD is deploying workloads but Falco is not running. Runtime threat
+              detection is offline — new deployments are not being monitored. This is
+              an S-rank concern. Pause ArgoCD syncs until Falco is restored:
+              argocd app pause-sync --all
+            runbook_url: "https://wiki.internal/runbooks/argocd/sync-without-falco"

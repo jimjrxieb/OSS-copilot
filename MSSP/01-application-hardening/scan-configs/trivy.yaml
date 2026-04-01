@@ -1,0 +1,138 @@
+# Trivy Configuration
+# Multi-purpose vulnerability and misconfiguration scanner
+# Docs: https://aquasecurity.github.io/trivy/
+
+# Scan configuration
+scan:
+  # Security checks to enable
+  security-checks:
+    - vuln          # Vulnerabilities in OS packages and language dependencies
+    - config        # Misconfigurations in IaC files
+    - secret        # Secrets and credentials
+    - license       # License compliance
+
+  # Skip directories
+  skip-dirs:
+    - node_modules
+    - vendor
+    - venv
+    - .venv
+    - env
+    - .git
+    - tests
+    - test
+    - __tests__
+    - dist
+    - build
+    - out
+
+  # Skip files
+  skip-files:
+    - "*.min.js"
+    - "*.bundle.js"
+    - "*.lock"
+
+# Vulnerability filtering
+vulnerability:
+  # Severity levels to report (UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL)
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+
+  # Vulnerability types
+  type:
+    - os          # OS packages
+    - library     # Language-specific packages
+
+  # Only report vulnerabilities with fixes available
+  ignore-unfixed: false
+
+  # VEX (Vulnerability Exploitability eXchange)
+  vex: ""
+
+# Misconfiguration checks
+misconfiguration:
+  # Severity levels to report
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+
+  # Include built-in policies
+  include-non-failures: false
+
+  # Policy paths (custom policies)
+  policy:
+    - builtin
+
+  # Compliance standards
+  compliance:
+    - k8s-cis
+    - k8s-nsa
+    - k8s-pss-baseline
+    - docker-cis
+    - aws-cis-1.2
+
+# Secret detection
+secret:
+  # Use custom Gitleaks config
+  config: .gitleaks.toml
+
+# License scanning
+license:
+  # License types to flag
+  forbidden:
+    - GPL-2.0
+    - GPL-3.0
+    - AGPL-1.0
+    - AGPL-3.0
+
+  # Full vs confidential mode
+  full: false
+
+# Database configuration
+db:
+  # Skip database update check (useful for CI)
+  skip-update: false
+
+  # Database repository
+  repository: ghcr.io/aquasecurity/trivy-db
+
+# Output configuration
+format: json  # json, table, sarif, template, cyclonedx, spdx, github
+
+# Exit code configuration (for CI)
+exit-code: 1  # Exit with code 1 if vulnerabilities found
+
+# Timeout
+timeout: 5m0s
+
+# Cache configuration
+cache:
+  # Clear cache before scanning
+  clear: false
+
+  # Cache directory
+  dir: ~/.cache/trivy
+
+# Ignore file (.trivyignore)
+ignorefile: .trivyignore
+
+# Offline mode (useful for air-gapped environments)
+offline-scan: false
+
+# Registry configuration (for image scanning)
+registry:
+  # Skip TLS verification (not recommended for production)
+  insecure: false
+
+# SBOM configuration
+sbom:
+  # Generate SBOM
+  format: cyclonedx-json  # cyclonedx-json, spdx-json
+
+# Java-specific configuration
+java:
+  # Database path for Java indexes
+  db-repository: ghcr.io/aquasecurity/trivy-java-db
