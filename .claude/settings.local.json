@@ -7,7 +7,9 @@
       "Bash(cp /home/jimmie/linkops-industries/GP-copilot/GP-CONSULTING/01-APP-SEC/01-scanners/configs/.checkov.yaml MSSP/01-application-hardening/scanners/configs/)",
       "Bash(cp /home/jimmie/linkops-industries/GP-copilot/GP-CONSULTING/01-APP-SEC/01-scanners/configs/.gitleaks.toml MSSP/01-application-hardening/scanners/configs/)",
       "Bash(cp /home/jimmie/linkops-industries/GP-copilot/GP-CONSULTING/01-APP-SEC/01-scanners/configs/.hadolint.yaml MSSP/01-application-hardening/scanners/configs/)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
